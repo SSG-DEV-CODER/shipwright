@@ -12,6 +12,12 @@
  */
 
 import { loadConfig, applyCliOverrides } from "./config.js";
+import { runPipeline } from "./pipeline/orchestrator.js";
+import { loadExpertise } from "./expertise/loader.js";
+import { parsePRD } from "./intake/prd-parser.js";
+import { deriveSprints } from "./intake/sprint-planner.js";
+import { fileExists, readJsonFile } from "./lib/fs.js";
+import type { PipelineState } from "./pipeline/types.js";
 
 const VERSION = "0.1.0";
 
@@ -74,18 +80,38 @@ async function runBuild(args: ParsedArgs): Promise<void> {
     console.log("   Mode: DRY RUN (plan + negotiate only)\n");
   }
 
-  // TODO: Sprint 2+ — wire up pipeline orchestrator
-  console.log("Pipeline orchestrator not yet implemented. Coming in Sprint 3.");
+  const result = await runPipeline(config, prdPath, {
+    dryRun: args.flags["dry-run"] === true,
+    sprintFilter: args.flags.sprint ? parseInt(args.flags.sprint as string, 10) : undefined,
+    noCommit: args.flags["no-commit"] === true,
+    noImprove: args.flags["no-improve"] === true,
+    verbose: args.flags.verbose === true,
+  });
+
+  // Exit with appropriate code
+  process.exit(result.status === "complete" ? 0 : 1);
 }
 
 async function runExpertise(args: ParsedArgs): Promise<void> {
   const subcmd = args.positional[0];
 
+  const config = loadConfig(args.flags.config as string | undefined);
+
   switch (subcmd) {
-    case "list":
-      // TODO: Sprint 5 — list expertise files
-      console.log("Expertise list not yet implemented. Coming in Sprint 5.");
+    case "list": {
+      const ctx = loadExpertise(config.expertise.dir);
+      if (ctx.files.length === 0) {
+        console.log("No expertise files found.");
+      } else {
+        console.log(`\n⚓ Expertise Files (${ctx.totalLines} total lines)\n`);
+        for (const f of ctx.files) {
+          const stability = f.content.metadata?.stability ?? "unknown";
+          console.log(`  ${f.domain.padEnd(25)} ${String(f.lineCount).padStart(5)} lines  [${stability}]  ${f.lastUpdated}`);
+        }
+        console.log("");
+      }
       break;
+    }
     case "validate":
       console.log("Expertise validate not yet implemented. Coming in Sprint 5.");
       break;
@@ -106,8 +132,32 @@ async function runExpertise(args: ParsedArgs): Promise<void> {
 }
 
 async function showStatus(): Promise<void> {
-  // TODO: Sprint 4 — read .shipwright/state.json
-  console.log("Status not yet implemented. Coming in Sprint 4.");
+  const statePath = ".shipwright/state.json";
+  if (!fileExists(statePath)) {
+    console.log("No active pipeline. Run `shipwright build <prd>` to start.");
+    return;
+  }
+
+  const state = readJsonFile<PipelineState>(statePath);
+  if (!state) {
+    console.log("Could not read pipeline state.");
+    return;
+  }
+
+  console.log(`\n⚓ Pipeline Status`);
+  console.log(`   PRD: ${state.prdPath}`);
+  console.log(`   Phase: ${state.phase}`);
+  console.log(`   Sprint: ${state.currentSprintIndex + 1}/${state.sprints.length}`);
+  console.log(`   Attempt: ${state.currentAttempt}`);
+  console.log(`   Started: ${state.startedAt}`);
+  console.log(`   Updated: ${state.updatedAt}`);
+  console.log(`   Cost: $${state.totalCostUsd.toFixed(4)}\n`);
+
+  for (const sprint of state.sprints) {
+    const emoji = sprint.status === "passed" ? "✅" : sprint.status === "failed" ? "❌" : sprint.status === "in_progress" ? "🔄" : "⏳";
+    console.log(`   ${emoji} ${sprint.plan.title} — ${sprint.status} (${sprint.attempts.length} attempts)`);
+  }
+  console.log("");
 }
 
 async function resumePipeline(): Promise<void> {
