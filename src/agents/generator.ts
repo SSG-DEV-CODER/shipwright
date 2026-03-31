@@ -122,7 +122,7 @@ export async function runGenerator(
     persistSession: true,
   });
 
-  return extractJson<GeneratorOutput>(
+  const parsed = extractJson<GeneratorOutput>(
     result.output,
     ["filesCreated", "approach"],
     {
@@ -133,6 +133,14 @@ export async function runGenerator(
       knownLimitations: [],
     }
   );
+
+  return {
+    filesCreated: Array.isArray(parsed.filesCreated) ? parsed.filesCreated : [],
+    filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified : [],
+    approach: typeof parsed.approach === "string" ? parsed.approach : result.output.slice(0, 500),
+    decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+    knownLimitations: Array.isArray(parsed.knownLimitations) ? parsed.knownLimitations : [],
+  };
 }
 
 function loadPromptFile(filename: string): string {

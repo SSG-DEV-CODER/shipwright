@@ -55,11 +55,11 @@ export async function negotiateContract(
         ? plannerOutput.validationCommands
         : [config.target.typecheckCmd],
     },
-    evaluationCriteria: plannerOutput.evaluationCriteria.map((ec, idx) => ({
+    evaluationCriteria: (plannerOutput.evaluationCriteria ?? []).map((ec, idx) => ({
       id: `eval-${String(idx + 1).padStart(3, "0")}`,
       criterion: ec.criterion,
-      weight: 1 / (plannerOutput.evaluationCriteria.length || 1),
-      specificChecks: ec.specificChecks,
+      weight: 1 / ((plannerOutput.evaluationCriteria ?? []).length || 1),
+      specificChecks: ec.specificChecks ?? [],
     })),
     negotiationRounds: [],
   };

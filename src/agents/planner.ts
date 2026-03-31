@@ -66,13 +66,22 @@ export async function runPlanner(
     workingDir: config.target.dir,
   });
 
-  return extractJson<PlannerOutput>(result.output, ["steps", "filesToCreate"], {
+  const parsed = extractJson<PlannerOutput>(result.output, ["steps", "filesToCreate"], {
     steps: [],
     filesToCreate: [],
     filesToModify: [],
     validationCommands: [config.target.typecheckCmd],
     evaluationCriteria: [],
   });
+
+  // Defensive coercion — LLMs sometimes return wrong types
+  return {
+    steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+    filesToCreate: Array.isArray(parsed.filesToCreate) ? parsed.filesToCreate : [],
+    filesToModify: Array.isArray(parsed.filesToModify) ? parsed.filesToModify : [],
+    validationCommands: Array.isArray(parsed.validationCommands) ? parsed.validationCommands : [config.target.typecheckCmd],
+    evaluationCriteria: Array.isArray(parsed.evaluationCriteria) ? parsed.evaluationCriteria : [],
+  };
 }
 
 function loadPromptFile(filename: string): string {
