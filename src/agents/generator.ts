@@ -1,115 +1,133 @@
 /**
  * Generator Agent — implements code according to a sprint contract
- * This is the ONLY agent that can create and modify files.
+ *
+ * Key insight from adversarial-dev: the harness does NOT parse the generator's
+ * output. It just lets the generator run and the evaluator independently
+ * inspects what was built. We follow the same pattern.
  */
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
-import { extractJson } from "../lib/json-extract.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { SprintContract, EvalResult } from "../pipeline/types.js";
 
 const GENERATOR_ROLE: AgentRole = "generator";
 
-export interface GeneratorOutput {
-  filesCreated: string[];
-  filesModified: string[];
-  approach: string;
-  decisions: string[];
-  knownLimitations: string[];
-}
-
+/**
+ * Run the generator agent. Returns the raw text response (not parsed).
+ * The harness does NOT use the return value for file tracking —
+ * the evaluator independently discovers what was built.
+ */
 export async function runGenerator(
   config: ShipwrightConfig,
   contract: SprintContract,
+  prdText: string,
   scoutReports: string,
   expertiseContext: string,
   previousFeedback?: EvalResult
-): Promise<GeneratorOutput> {
+): Promise<string> {
   const systemPrompt = loadPromptFile("generator.md");
-  const attempt = previousFeedback ? "RETRY" : "INITIAL";
 
+  // Build the user prompt — following adversarial-dev's pattern:
+  // Full spec + contract + optional feedback
   const parts: string[] = [
-    `## Sprint Contract: ${contract.title}`,
+    `IMPORTANT: Your working directory is ${resolve(config.target.dir)}. Create all files inside this directory.`,
     "",
-    `## Implementation Steps`,
+    "## Product Spec (PRD)",
+    "",
+    prdText,
+    "",
+    "## Sprint Implementation Plan",
+    "",
+    `### Sprint: ${contract.title}`,
+    "",
   ];
 
-  for (const step of contract.implementation.steps) {
-    parts.push(`${step.order}. ${step.description}`);
-    if ((step.targetFiles ?? []).length > 0) {
-      parts.push(`   Files: ${step.targetFiles.join(", ")}`);
-    }
-  }
-
-  parts.push(
-    "",
-    `## Files to Create: ${(contract.implementation.filesToCreate ?? []).join(", ") || "none"}`,
-    `## Files to Modify: ${(contract.implementation.filesToModify ?? []).join(", ") || "none"}`,
-    "",
-    `## Acceptance Criteria`,
-  );
-
-  for (const ac of contract.acceptanceCriteria) {
-    parts.push(`- [${ac.id}] ${ac.text}`);
-  }
-
-  parts.push(
-    "",
-    `## Validation Commands`,
-  );
-  for (const cmd of contract.implementation.validationCommands) {
-    parts.push(`- \`${cmd}\``);
-  }
-
-  if ((contract.evaluationCriteria ?? []).length > 0) {
-    parts.push("", `## Evaluator Will Check`);
-    for (const ec of contract.evaluationCriteria ?? []) {
-      parts.push(`- ${ec.criterion ?? "unknown criterion"}`);
-      for (const check of ec.specificChecks ?? []) {
-        parts.push(`  - ${check}`);
+  // Add concrete implementation steps
+  if (contract.implementation.steps.length > 0) {
+    parts.push("### Steps (implement in order, top to bottom):");
+    for (const step of contract.implementation.steps) {
+      parts.push(`${step.order}. ${step.description}`);
+      if ((step.targetFiles ?? []).length > 0) {
+        for (const f of step.targetFiles) {
+          parts.push(`   - File: ${f}`);
+        }
       }
     }
+    parts.push("");
   }
 
-  // Add scout reports and expertise
+  // Add file lists
+  if ((contract.implementation.filesToCreate ?? []).length > 0) {
+    parts.push("### Files to Create:");
+    for (const f of contract.implementation.filesToCreate) {
+      parts.push(`- ${f}`);
+    }
+    parts.push("");
+  }
+
+  if ((contract.implementation.filesToModify ?? []).length > 0) {
+    parts.push("### Files to Modify:");
+    for (const f of contract.implementation.filesToModify) {
+      parts.push(`- ${f}`);
+    }
+    parts.push("");
+  }
+
+  // Add acceptance criteria
+  if (contract.acceptanceCriteria.length > 0) {
+    parts.push("### Acceptance Criteria (evaluator will check these):");
+    for (const ac of contract.acceptanceCriteria) {
+      parts.push(`- [${ac.id}] ${ac.text}`);
+    }
+    parts.push("");
+  }
+
+  // Add validation commands
+  if ((contract.implementation.validationCommands ?? []).length > 0) {
+    parts.push("### Validation Commands (run AFTER implementing all files):");
+    for (const cmd of contract.implementation.validationCommands) {
+      parts.push(`- \`${cmd}\``);
+    }
+    parts.push("");
+  }
+
+  // Add scout reports and expertise as context
   if (scoutReports) {
-    parts.push("", scoutReports);
+    parts.push(scoutReports);
   }
   if (expertiseContext) {
-    parts.push("", expertiseContext);
+    parts.push(expertiseContext);
   }
 
   // Add retry feedback
   if (previousFeedback) {
     parts.push(
       "",
-      `## RETRY — Previous Evaluation Failed (score: ${previousFeedback.overallScore}/10)`,
+      "## EVALUATION FEEDBACK (MUST ADDRESS EVERY ISSUE)",
       "",
-      "**You MUST address ALL of these issues:**",
+      `Previous attempt scored ${previousFeedback.overallScore}/10 and FAILED.`,
       "",
       previousFeedback.feedback,
       "",
-      "**Specific failures:**",
     );
-    for (const reason of previousFeedback.failureReasons) {
-      parts.push(`- ${reason}`);
+    if ((previousFeedback.failureReasons ?? []).length > 0) {
+      parts.push("### Specific Failures:");
+      for (const reason of previousFeedback.failureReasons) {
+        parts.push(`- ${reason}`);
+      }
     }
     for (const score of (previousFeedback.scores ?? []).filter((s) => s.score < 7)) {
-      parts.push(`- [${score.criterionId}] ${score.criterion}: ${score.score}/10 — ${score.reasoning}`);
-      for (const failure of score.specificFailures) {
+      parts.push(`\n[${score.criterionId}] ${score.criterion}: ${score.score}/10 — ${score.reasoning}`);
+      for (const failure of score.specificFailures ?? []) {
         parts.push(`  - ${failure}`);
       }
     }
+    parts.push("", "Address every issue above. The evaluator will re-check all criteria.");
+  } else {
+    parts.push("", "Implement the features listed above. Work through the steps in order, top to bottom. Do not stop until every step is complete.");
   }
-
-  parts.push(
-    "",
-    `## Mode: ${attempt}`,
-    "",
-    "Implement the sprint. Make atomic commits. Produce a summary JSON with: filesCreated, filesModified, approach, decisions, knownLimitations.",
-  );
 
   const result = await runAgent({
     role: GENERATOR_ROLE,
@@ -122,25 +140,7 @@ export async function runGenerator(
     persistSession: true,
   });
 
-  const parsed = extractJson<GeneratorOutput>(
-    result.output,
-    ["filesCreated", "approach"],
-    {
-      filesCreated: [],
-      filesModified: [],
-      approach: result.output.slice(0, 500),
-      decisions: [],
-      knownLimitations: [],
-    }
-  );
-
-  return {
-    filesCreated: Array.isArray(parsed.filesCreated) ? parsed.filesCreated : [],
-    filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified : [],
-    approach: typeof parsed.approach === "string" ? parsed.approach : result.output.slice(0, 500),
-    decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
-    knownLimitations: Array.isArray(parsed.knownLimitations) ? parsed.knownLimitations : [],
-  };
+  return result.output;
 }
 
 function loadPromptFile(filename: string): string {
@@ -148,6 +148,6 @@ function loadPromptFile(filename: string): string {
   try {
     return readFileSync(promptPath, "utf-8");
   } catch {
-    return `You are a generator agent. Implement the sprint contract.`;
+    return `You are a software engineer. Implement the sprint plan top to bottom.`;
   }
 }

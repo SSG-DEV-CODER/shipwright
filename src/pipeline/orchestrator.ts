@@ -18,7 +18,7 @@ import { applyExpertiseUpdate } from "../expertise/updater.js";
 import { writeProgress } from "../tracking/progress.js";
 import { BuildLog } from "../tracking/log.js";
 import { gitCommit } from "../tracking/git.js";
-import { writeJsonFile, ensureDir } from "../lib/fs.js";
+import { writeJsonFile, ensureDir, readText } from "../lib/fs.js";
 import { CostLedger } from "../lib/cost.js";
 import type { ShipwrightConfig } from "../config.js";
 import type {
@@ -50,6 +50,7 @@ export async function runPipeline(
 
   // --- Phase: PARSING ---
   log("PARSE", `Reading PRD: ${prdPath}`);
+  const prdRawText = readText(prdPath); // Full PRD text for generator context
   const prd = parsePRD(prdPath);
   log("PARSE", `Title: ${prd.title}`);
   log("PARSE", `Acceptance criteria: ${prd.acceptanceCriteria.length}`);
@@ -183,31 +184,34 @@ export async function runPipeline(
       log("BUILD", `Attempt ${attempt}/${config.pipeline.maxRetries}...`);
       const attemptStart = Date.now();
 
-      // Build
-      const genOutput = await runGenerator(
+      // Build — generator runs and writes files directly via tools.
+      // We do NOT parse its output (following adversarial-dev pattern).
+      // The evaluator independently discovers what was built.
+      await runGenerator(
         config,
         contract,
+        prdRawText,
         scoutText,
         expertiseText,
         lastEvalResult
       );
-      log("BUILD", `Generator done. Created: ${genOutput.filesCreated.length}, Modified: ${genOutput.filesModified.length}`);
+      log("BUILD", "Generator done.");
 
-      // Evaluate
+      // Evaluate — evaluator independently inspects the filesystem
       state.phase = "evaluating";
       saveState(stateDir, state);
       log("EVAL", "Running evaluator (adversarial)...");
 
-      const filesChanged = [...genOutput.filesCreated, ...genOutput.filesModified];
-      const evalResult = await runEvaluator(config, contract, filesChanged);
+      // Let evaluator discover files on its own (not dependent on generator reporting)
+      const evalResult = await runEvaluator(config, contract, []);
 
       const attemptRecord: BuildAttempt = {
         attempt,
         startedAt: new Date(attemptStart).toISOString(),
         completedAt: new Date().toISOString(),
-        filesChanged,
+        filesChanged: [], // Evaluator discovers files independently
         evalResult,
-        costUsd: 0, // TODO: wire up cost tracking from agent results
+        costUsd: 0,
         durationMs: Date.now() - attemptStart,
       };
       sprintState.attempts.push(attemptRecord);
@@ -215,7 +219,6 @@ export async function runPipeline(
       // Save attempt
       const attemptDir = resolve(sprintDir, `attempt-${attempt}`);
       ensureDir(attemptDir);
-      writeJsonFile(resolve(attemptDir, "generator-output.json"), genOutput);
       writeJsonFile(resolve(attemptDir, "eval-result.json"), evalResult);
 
       // Log the attempt
