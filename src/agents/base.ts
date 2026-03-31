@@ -91,6 +91,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     });
 
     for await (const event of stream) {
+      // Capture text from assistant messages
       if (event.type === "assistant" && Array.isArray(event.message?.content)) {
         for (const block of event.message.content) {
           if (block.type === "text") {
@@ -98,16 +99,19 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           }
         }
       }
+      // Capture result — prefer result.text if we have no accumulated output
       if (event.type === "result") {
-        // Extract token usage from result if available
         if (event.usage) {
           inputTokens += event.usage.input_tokens ?? 0;
           outputTokens += event.usage.output_tokens ?? 0;
         }
-        // Also capture final text
-        if (event.text) {
+        if (event.text && !fullOutput.trim()) {
           fullOutput = event.text;
         }
+      }
+      // Handle other text events (some SDK versions emit these)
+      if (event.type === "text" && typeof event.text === "string") {
+        fullOutput += event.text;
       }
     }
   } catch (err) {

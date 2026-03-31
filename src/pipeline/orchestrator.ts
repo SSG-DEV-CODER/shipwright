@@ -116,7 +116,8 @@ export async function runPipeline(
     let scoutReports: ScoutReport[] = [];
     try {
       scoutReports = await runScouts(config, sprint, expertiseText);
-      log("SCOUT", `Scouts complete. Found ${scoutReports.reduce((sum, r) => sum + r.findings.relevantFiles.length, 0)} relevant files.`);
+      const totalFiles = scoutReports.reduce((sum, r) => sum + (r.findings?.relevantFiles?.length ?? 0), 0);
+      log("SCOUT", `Scouts complete. Found ${totalFiles} relevant files across ${scoutReports.length} reports.`);
     } catch (err) {
       log("SCOUT", `Scout failed (non-fatal): ${err}`);
     }
