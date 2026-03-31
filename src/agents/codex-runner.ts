@@ -66,6 +66,7 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
     "--sandbox", options.sandbox ?? "read-only",
     "--dangerously-bypass-approvals-and-sandbox",
     "--output-last-message", outputFile,
+    "--json", // JSONL events on stdout — ensures we capture the final message
     "--cd", resolve(options.workingDir),
     "--skip-git-repo-check",
   ];
@@ -117,18 +118,59 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
       const durationMs = Date.now() - start;
 
       // Read the output file (last message from agent)
-      let output = "";
+      let outputFromFile = "";
       try {
         if (existsSync(outputFile)) {
-          output = readFileSync(outputFile, "utf-8").trim();
+          outputFromFile = readFileSync(outputFile, "utf-8").trim();
         }
       } catch {
         // Fall through
       }
 
-      // Fallback to stdout if output file is empty
+      // Prefer stdout (which has the full conversation including the JSON schema output)
+      // The --output-last-message file sometimes contains the prompt echo, not the response
+      let output = "";
+
+      // Strategy 1: Parse JSONL events from stdout to find the agent's final message
+      if (stdoutOutput) {
+        const lines = stdoutOutput.split("\n").filter(Boolean);
+        for (const line of lines.reverse()) { // Search from the end
+          try {
+            const event = JSON.parse(line);
+            // Look for message events containing our eval schema keys
+            const text = event.message?.content?.[0]?.text
+              ?? event.content?.[0]?.text
+              ?? event.text
+              ?? (typeof event === "string" ? event : null);
+            if (text && typeof text === "string" && text.includes('"passed"') && text.includes('"scores"')) {
+              output = text;
+              break;
+            }
+          } catch {
+            // Not valid JSON line — check if the line itself is our eval JSON
+            if (line.includes('"passed"') && line.includes('"scores"')) {
+              output = line;
+              break;
+            }
+          }
+        }
+      }
+
+      // Strategy 2: Check output file for JSON
+      if (!output && outputFromFile) {
+        if (outputFromFile.includes('"passed"') && outputFromFile.includes('"scores"')) {
+          output = outputFromFile;
+        }
+      }
+
+      // Strategy 3: Use raw stdout
       if (!output && stdoutOutput) {
         output = stdoutOutput.trim();
+      }
+
+      // Strategy 4: Use output file as-is
+      if (!output && outputFromFile) {
+        output = outputFromFile;
       }
 
       // If still empty, use stderr as diagnostic
