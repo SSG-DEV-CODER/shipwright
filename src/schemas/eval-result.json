@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EvalResult",
+  "description": "Adversarial evaluation result — scores each acceptance criterion 1-10",
+  "type": "object",
+  "required": ["passed", "overallScore", "scores", "feedback", "failureReasons"],
+  "properties": {
+    "passed": {
+      "type": "boolean",
+      "description": "True ONLY if ALL scores are 7 or above"
+    },
+    "overallScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Average of all individual scores (0-10)"
+    },
+    "scores": {
+      "type": "array",
+      "description": "One entry per acceptance criterion",
+      "items": {
+        "type": "object",
+        "required": ["criterionId", "criterion", "score", "reasoning"],
+        "properties": {
+          "criterionId": {
+            "type": "string",
+            "description": "Criterion ID (e.g., ac-001)"
+          },
+          "criterion": {
+            "type": "string",
+            "description": "What was being evaluated"
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Score 1-10. 7+ means acceptable. Below 7 means real problems."
+          },
+          "reasoning": {
+            "type": "string",
+            "description": "Why this score — be specific with file paths and line numbers"
+          },
+          "specificFailures": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Specific failures found (file:line — what's wrong)"
+          }
+        }
+      }
+    },
+    "feedback": {
+      "type": "string",
+      "description": "Detailed feedback for the Generator to fix the issues found"
+    },
+    "failureReasons": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Top-level reasons the sprint failed (empty if passed)"
+    }
+  }
+}

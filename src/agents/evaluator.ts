@@ -84,11 +84,13 @@ export async function runEvaluator(
 
   if (isCodexModel && await isCodexAvailable()) {
     console.log("[evaluator] Using Codex CLI (adversarial — different model than generator)");
+    const schemaPath = resolve(import.meta.dir, "../schemas/eval-result.json");
     const codexResult = await runCodex({
       systemPrompt,
       userPrompt,
       workingDir: config.target.dir,
       sandbox: "read-only",
+      outputSchema: schemaPath, // Forces Codex to produce valid JSON matching our schema
     });
     rawOutput = codexResult.output;
   } else {

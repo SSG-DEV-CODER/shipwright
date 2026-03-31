@@ -99,4 +99,54 @@ Overall: 8/10 — solid implementation.
     expect(result!.passed).toBe(true);
     expect(result!.overallScore).toBeGreaterThanOrEqual(7);
   });
+
+  test("parses structured markdown format (### SCORE: ac-001)", () => {
+    const text = `
+## EVALUATION RESULT
+
+### OVERALL
+- passed: false
+- overallScore: 4.7
+
+### SCORE: ac-001
+- criterion: TypeScript compiles clean
+- score: 3/10
+- reasoning: Compilation fails with 12 errors
+- failures: src/lib/supabase.ts:5 — Cannot find module
+- failures: src/payload.config.ts:12 — Property does not exist
+
+### SCORE: ac-002
+- criterion: API responds to GET /health
+- score: 8/10
+- reasoning: Health endpoint returns 200 OK
+- failures: none
+
+### SCORE: ac-003
+- criterion: Payload admin loads
+- score: 3/10
+- reasoning: Admin page crashes — missing collection registrations
+- failures: No collections registered in payload.config.ts
+
+### FEEDBACK
+The TypeScript compilation has 12 errors. Fix the missing supabase module
+and register Payload collections before the admin will work.
+
+### FAILURE REASONS
+- Missing supabase dependency in package.json
+- TypeScript compilation fails with 12 errors
+- No Payload collections registered
+    `;
+
+    const result = extractEvalFromText(text, SAMPLE_CRITERIA);
+    expect(result).not.toBeNull();
+    expect(result!.passed).toBe(false);
+    expect(result!.overallScore).toBeCloseTo(4.7, 0);
+    expect(result!.scores.length).toBe(3);
+    expect(result!.scores[0].score).toBe(3);
+    expect(result!.scores[0].specificFailures.length).toBe(2);
+    expect(result!.scores[1].score).toBe(8);
+    expect(result!.scores[2].score).toBe(3);
+    expect(result!.failureReasons.length).toBeGreaterThan(0);
+    expect(result!.feedback).toContain("TypeScript compilation");
+  });
 });

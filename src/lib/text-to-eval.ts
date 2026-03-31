@@ -19,6 +19,10 @@ export function extractEvalFromText(
 ): EvalResult | null {
   if (!text || text.length < 50) return null;
 
+  // Strategy 0: Try structured markdown format (### SCORE: ac-001)
+  const structuredResult = parseStructuredMarkdown(text, criteria, threshold);
+  if (structuredResult) return structuredResult;
+
   const scores: EvalScore[] = [];
 
   // Strategy 1: Look for score patterns like "7/10", "score: 8", "Score: 4/10"
@@ -83,6 +87,93 @@ export function extractEvalFromText(
     failureReasons: failureReasons.length > 0
       ? failureReasons
       : passed ? [] : ["See feedback for details"],
+  };
+}
+
+/**
+ * Parse the structured markdown format we ask Claude evaluator to produce:
+ * ### SCORE: ac-001
+ * - criterion: ...
+ * - score: 7/10
+ * - reasoning: ...
+ * - failures: ...
+ */
+function parseStructuredMarkdown(
+  text: string,
+  criteria: AcceptanceCriterion[],
+  threshold: number
+): EvalResult | null {
+  const scoreBlocks = text.split(/###\s*SCORE:\s*/i).slice(1); // Split on ### SCORE:
+  if (scoreBlocks.length === 0) return null;
+
+  const scores: EvalScore[] = [];
+
+  for (const block of scoreBlocks) {
+    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+    const idLine = lines[0] ?? "";
+    const id = idLine.match(/^(ac-\d+)/i)?.[1] ?? idLine.trim();
+
+    const getValue = (key: string): string => {
+      const line = lines.find((l) => l.match(new RegExp(`^-\\s*${key}:`, "i")));
+      return line?.replace(new RegExp(`^-\\s*${key}:\\s*`, "i"), "").trim() ?? "";
+    };
+
+    const getValues = (key: string): string[] => {
+      return lines
+        .filter((l) => l.match(new RegExp(`^-\\s*${key}:`, "i")))
+        .map((l) => l.replace(new RegExp(`^-\\s*${key}:\\s*`, "i"), "").trim())
+        .filter((v) => v && v.toLowerCase() !== "none");
+    };
+
+    const scoreStr = getValue("score");
+    const scoreNum = extractScoreFromText(scoreStr) || extractScoreFromText(block.slice(0, 200));
+
+    scores.push({
+      criterionId: id,
+      criterion: getValue("criterion") || (criteria.find((c) => c.id === id)?.text ?? id),
+      score: scoreNum,
+      reasoning: getValue("reasoning"),
+      specificFailures: getValues("failures"),
+    });
+  }
+
+  if (scores.length === 0 || scores.every((s) => s.score === 0)) return null;
+
+  // Parse OVERALL section
+  const overallMatch = text.match(/###\s*OVERALL[\s\S]*?(?=###|$)/i);
+  let overallScore = 0;
+  let passed = false;
+
+  if (overallMatch) {
+    const overallBlock = overallMatch[0];
+    const scoreMatch = overallBlock.match(/overallScore:\s*([\d.]+)/i);
+    if (scoreMatch) overallScore = parseFloat(scoreMatch[1]);
+    const passedMatch = overallBlock.match(/passed:\s*(true|false)/i);
+    if (passedMatch) passed = passedMatch[1].toLowerCase() === "true";
+  }
+
+  if (overallScore === 0 && scores.length > 0) {
+    overallScore = Math.round((scores.reduce((s, sc) => s + sc.score, 0) / scores.length) * 10) / 10;
+  }
+  if (!passed) {
+    passed = overallScore >= threshold && scores.every((s) => s.score >= threshold);
+  }
+
+  // Parse FEEDBACK and FAILURE REASONS sections
+  const feedbackMatch = text.match(/###\s*FEEDBACK\s*\n([\s\S]*?)(?=###|$)/i);
+  const failureMatch = text.match(/###\s*FAILURE REASONS\s*\n([\s\S]*?)(?=###|$)/i);
+
+  const feedback = feedbackMatch?.[1]?.trim() ?? "";
+  const failureReasons = failureMatch
+    ? failureMatch[1].split("\n").map((l) => l.replace(/^[-*]\s*/, "").trim()).filter((l) => l.length > 5)
+    : scores.filter((s) => s.score < threshold).map((s) => `[${s.criterionId}] ${s.reasoning}`);
+
+  return {
+    passed,
+    overallScore,
+    scores,
+    feedback: feedback || text.slice(-2000),
+    failureReasons: passed ? [] : failureReasons,
   };
 }
 

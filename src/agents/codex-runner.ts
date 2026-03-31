@@ -21,6 +21,7 @@ export interface CodexRunnerOptions {
   workingDir: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  outputSchema?: string; // Path to JSON Schema file — forces structured output
 }
 
 export interface CodexRunnerResult {
@@ -71,6 +72,11 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
 
   if (options.model) {
     args.push("--model", options.model);
+  }
+
+  // Force structured JSON output via schema
+  if (options.outputSchema) {
+    args.push("--output-schema", resolve(options.outputSchema));
   }
 
   // Pass prompt via stdin
