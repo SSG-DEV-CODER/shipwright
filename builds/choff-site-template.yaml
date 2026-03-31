@@ -25,7 +25,7 @@ models:
 
 pipeline:
   max_retries: 3
-  max_scouts: 5
+  max_scouts: 3
   contract_rounds: 2
   eval_pass_threshold: 7.0
 
@@ -35,13 +35,13 @@ expertise:
   max_lines: 1000
 
 # Reference codebases — scouts explore these for patterns (read-only)
+# NOTE: Hub (798 files) removed — too large, causes SDK to hang.
+# Hub patterns are captured in the nextjs-payload expertise file instead.
 references:
   - path: "/Users/maffy/Developer/choff-platform/packages/publish"
     label: "CHOFF Publish (content pipeline + social connectors)"
   - path: "/Users/maffy/Developer/choff-platform/packages/watchtower"
     label: "CHOFF Watchtower (analytics + defense)"
-  - path: "/Users/maffy/Developer/choff-platform/packages/hub"
-    label: "CHOFF Hub (Payload CMS patterns + dashboard)"
 
 tracking:
   progress_file: "PROGRESS.md"
