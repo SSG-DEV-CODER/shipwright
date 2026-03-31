@@ -77,6 +77,30 @@
 - Improver wired into pipeline (auto-updates after success)
 - Full tracking integration (progress + log + git)
 
-## All Sprints Complete
+## Post-Sprint: Hardening + Expertise Base
 
-Shipwright v0.1.0 is feature-complete. Ready for first real test: running against PRD-platform-restructure-phase-1.md with choff-platform as reference.
+**Date:** 2026-03-31
+
+- Implemented all stubbed CLI commands (expertise validate/improve/create/question, resume)
+- Built 3 domain expertise files by scouting choff-platform monorepo:
+  - `content-pipeline.yaml` (172 lines) — atom extraction, social connectors, go-live gates
+  - `analytics-defense.yaml` (154 lines) — Umami proxy, threat detection, experiments
+  - `nextjs-payload.yaml` (127 lines) — Payload CMS conventions, route patterns
+- Added 8 expertise tests (loader, updater, validator) — 18/18 total passing
+- Created build config: `builds/choff-site-template.yaml` targeting Phase 1 PRD
+- Total: 50 files, 3,852 lines TypeScript, 18 tests, zero type errors
+
+## Ready for Production Use
+
+Shipwright is ready to run against `PRD-platform-restructure-phase-1.md`.
+
+```bash
+# Create target workspace
+mkdir -p /Users/maffy/Developer/choff-site-template && cd $_
+git init
+
+# Run Shipwright
+bun /Users/maffy/Developer/shipwright/src/index.ts build \
+  /Users/maffy/Developer/choff-platform/docs/plans/PRD-platform-restructure-phase-1.md \
+  --config /Users/maffy/Developer/shipwright/builds/choff-site-template.yaml
+```
