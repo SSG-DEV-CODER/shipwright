@@ -116,8 +116,14 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       }
     }
   } catch (err) {
-    console.error(`[${options.role}] Agent error:`, err);
-    throw err;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[${options.role}] Agent error: ${errMsg}`);
+    // Return whatever output we collected, don't crash the pipeline
+    if (fullOutput.trim()) {
+      console.warn(`[${options.role}] Returning partial output (${fullOutput.length} chars)`);
+    } else {
+      fullOutput = `[ERROR] Agent ${options.role} failed: ${errMsg}`;
+    }
   }
 
   const durationMs = Date.now() - start;
