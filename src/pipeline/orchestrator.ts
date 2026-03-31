@@ -15,6 +15,7 @@ import { execSync } from "child_process";
 import { parsePRD } from "../intake/prd-parser.js";
 import { deriveSprints } from "../intake/sprint-planner.js";
 import { loadExpertise, formatExpertiseForPrompt } from "../expertise/loader.js";
+import { setVerbose } from "../agents/base.js";
 import { runScouts, formatScoutReports } from "../agents/scout.js";
 import { runPlanner } from "../agents/planner.js";
 import { runGenerator } from "../agents/generator.js";
@@ -54,6 +55,9 @@ export async function runPipeline(
   const stateDir = resolve(config.target.dir, ".shipwright");
   ensureDir(stateDir);
   const buildLog = new BuildLog(config, prdPath);
+
+  // Set verbose flag for all agents
+  setVerbose(options.verbose ?? false);
 
   // Ensure target is a git repo (for diff tracking)
   if (!isGitRepo(config.target.dir)) {

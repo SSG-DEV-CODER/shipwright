@@ -85,6 +85,13 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
   return new Promise<CodexRunnerResult>((resolvePromise) => {
     let stderrOutput = "";
 
+    // Heartbeat while Codex is running
+    const heartbeat = setInterval(() => {
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+      console.log(`[${ts}] [HEARTBEAT ] codex evaluator working (${elapsed}s elapsed)`);
+    }, 60_000);
+
     const proc = spawn("codex", args, {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: resolve(options.workingDir),
@@ -106,6 +113,7 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
     });
 
     proc.on("close", (code) => {
+      clearInterval(heartbeat);
       const durationMs = Date.now() - start;
 
       // Read the output file (last message from agent)
@@ -156,6 +164,7 @@ export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunner
 
     // Timeout after 5 minutes
     setTimeout(() => {
+      clearInterval(heartbeat);
       proc.kill("SIGTERM");
     }, 300_000);
   });
