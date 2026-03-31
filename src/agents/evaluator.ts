@@ -89,8 +89,7 @@ export async function runEvaluator(
       systemPrompt,
       userPrompt,
       workingDir: config.target.dir,
-      sandbox: "read-only",
-      outputSchema: schemaPath, // Forces Codex to produce valid JSON matching our schema
+      outputSchema: schemaPath,
     });
     rawOutput = codexResult.output;
   } else {

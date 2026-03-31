@@ -1,213 +1,149 @@
 /**
- * Codex Runner — invokes OpenAI Codex CLI for the evaluator role
+ * Codex Runner — invokes OpenAI Codex SDK for the evaluator role
  *
- * Separate from the Claude Code SDK path. Uses `codex exec` with:
- * - --sandbox read-only (evaluator cannot modify files)
- * - --output-last-message (captures final text output)
- * - --dangerously-bypass-approvals-and-sandbox for automated use
- * - --json for structured event stream
+ * Uses @openai/codex-sdk (proper JavaScript API) instead of CLI spawn.
+ * This matches how adversarial-dev uses Codex and avoids all stdout/file
+ * capture issues from the CLI wrapper approach.
+ *
+ * The SDK handles:
+ * - Sandbox enforcement (read-only for evaluator)
+ * - Structured output via outputSchema (guaranteed valid JSON)
+ * - Tool execution (bash, file reads)
+ * - Session management
  */
 
-import { spawn } from "child_process";
-import { resolve, join } from "path";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "fs";
-import { tmpdir } from "os";
+import { resolve } from "path";
+import { readFileSync } from "fs";
 import { estimateCost, type CostEntry } from "../lib/cost.js";
+import { isVerbose } from "./base.js";
 import type { AgentRole } from "./base.js";
 
 export interface CodexRunnerOptions {
   systemPrompt: string;
   userPrompt: string;
   workingDir: string;
-  model?: string;
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  outputSchema?: string; // Path to JSON Schema file — forces structured output
+  outputSchema?: string; // Path to JSON Schema file
 }
 
 export interface CodexRunnerResult {
   output: string;
   costEntry: CostEntry;
   durationMs: number;
-  exitCode: number;
 }
 
 /**
- * Check if the Codex CLI is available.
+ * Check if the Codex SDK can be imported.
  */
 export async function isCodexAvailable(): Promise<boolean> {
   try {
-    const proc = Bun.spawn(["codex", "--version"], { stdout: "pipe", stderr: "pipe" });
-    await proc.exited;
-    return proc.exitCode === 0;
+    await import("@openai/codex-sdk");
+    return true;
   } catch {
     return false;
   }
 }
 
+function agentLog(message: string): void {
+  const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+  console.log(`[${ts}] [CODEX-EVAL] ${message}`);
+}
+
 /**
- * Run a prompt through the Codex CLI in non-interactive mode.
+ * Run an evaluation through the Codex SDK.
  */
 export async function runCodex(options: CodexRunnerOptions): Promise<CodexRunnerResult> {
   const start = Date.now();
-  const tmpDir = mkdtempSync(join(tmpdir(), "shipwright-codex-"));
-  const outputFile = join(tmpDir, "output.txt");
+  const verbose = isVerbose();
 
-  // Build the full prompt with system prompt prepended
-  const fullPrompt = [
-    options.systemPrompt,
-    "",
-    "---",
-    "",
-    options.userPrompt,
-  ].join("\n");
+  // Heartbeat
+  const heartbeat = setInterval(() => {
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    agentLog(`working (${elapsed}s elapsed)`);
+  }, 60_000);
 
-  const args = [
-    "exec",
-    "--sandbox", options.sandbox ?? "read-only",
-    "--dangerously-bypass-approvals-and-sandbox",
-    "--output-last-message", outputFile,
-    "--json", // JSONL events on stdout — ensures we capture the final message
-    "--cd", resolve(options.workingDir),
-    "--skip-git-repo-check",
-  ];
+  try {
+    const { Codex } = await import("@openai/codex-sdk");
 
-  if (options.model) {
-    args.push("--model", options.model);
-  }
-
-  // Force structured JSON output via schema
-  if (options.outputSchema) {
-    args.push("--output-schema", resolve(options.outputSchema));
-  }
-
-  // Pass prompt via stdin
-  args.push("-"); // Read from stdin
-
-  return new Promise<CodexRunnerResult>((resolvePromise) => {
-    let stderrOutput = "";
-
-    // Heartbeat while Codex is running
-    const heartbeat = setInterval(() => {
-      const elapsed = Math.round((Date.now() - start) / 1000);
-      const ts = new Date().toISOString().split("T")[1].replace("Z", "");
-      console.log(`[${ts}] [HEARTBEAT ] codex evaluator working (${elapsed}s elapsed)`);
-    }, 60_000);
-
-    const proc = spawn("codex", args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      cwd: resolve(options.workingDir),
+    const codex = new Codex();
+    const thread = codex.startThread({
+      sandboxMode: "read-only",
+      workingDirectory: resolve(options.workingDir),
+      skipGitRepoCheck: true,
+      approvalPolicy: "never",
     });
 
-    // Write prompt to stdin
-    proc.stdin?.write(fullPrompt);
-    proc.stdin?.end();
+    // Build the prompt (system + user combined — Codex doesn't have separate system prompt)
+    const fullPrompt = [
+      options.systemPrompt,
+      "",
+      "---",
+      "",
+      options.userPrompt,
+    ].join("\n");
 
-    // Capture stderr for debugging
-    proc.stderr?.on("data", (chunk: Buffer) => {
-      stderrOutput += chunk.toString();
-    });
-
-    // Capture stdout (JSONL events if --json was used, otherwise text)
-    let stdoutOutput = "";
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      stdoutOutput += chunk.toString();
-    });
-
-    proc.on("close", (code) => {
-      clearInterval(heartbeat);
-      const durationMs = Date.now() - start;
-
-      // Read the output file (last message from agent)
-      let outputFromFile = "";
+    // Load output schema if provided
+    let outputSchema: unknown | undefined;
+    if (options.outputSchema) {
       try {
-        if (existsSync(outputFile)) {
-          outputFromFile = readFileSync(outputFile, "utf-8").trim();
-        }
-      } catch {
-        // Fall through
+        outputSchema = JSON.parse(readFileSync(resolve(options.outputSchema), "utf-8"));
+      } catch (err) {
+        agentLog(`Warning: could not load output schema: ${err}`);
       }
+    }
 
-      // Prefer stdout (which has the full conversation including the JSON schema output)
-      // The --output-last-message file sometimes contains the prompt echo, not the response
-      let output = "";
-
-      // Strategy 1: Parse JSONL events from stdout to find the agent's final message
-      if (stdoutOutput) {
-        const lines = stdoutOutput.split("\n").filter(Boolean);
-        for (const line of lines.reverse()) { // Search from the end
-          try {
-            const event = JSON.parse(line);
-            // Look for message events containing our eval schema keys
-            const text = event.message?.content?.[0]?.text
-              ?? event.content?.[0]?.text
-              ?? event.text
-              ?? (typeof event === "string" ? event : null);
-            if (text && typeof text === "string" && text.includes('"passed"') && text.includes('"scores"')) {
-              output = text;
-              break;
-            }
-          } catch {
-            // Not valid JSON line — check if the line itself is our eval JSON
-            if (line.includes('"passed"') && line.includes('"scores"')) {
-              output = line;
-              break;
-            }
-          }
-        }
-      }
-
-      // Strategy 2: Check output file for JSON
-      if (!output && outputFromFile) {
-        if (outputFromFile.includes('"passed"') && outputFromFile.includes('"scores"')) {
-          output = outputFromFile;
-        }
-      }
-
-      // Strategy 3: Use raw stdout
-      if (!output && stdoutOutput) {
-        output = stdoutOutput.trim();
-      }
-
-      // Strategy 4: Use output file as-is
-      if (!output && outputFromFile) {
-        output = outputFromFile;
-      }
-
-      // If still empty, use stderr as diagnostic
-      if (!output) {
-        output = `[Codex exec completed with code ${code}. No output captured.]`;
-        if (stderrOutput) {
-          console.warn(`[codex] stderr: ${stderrOutput.slice(0, 500)}`);
-        }
-      }
-
-      // Clean up temp files
-      try {
-        const { rmSync } = require("fs");
-        rmSync(tmpDir, { recursive: true, force: true });
-      } catch {
-        // Non-critical
-      }
-
-      resolvePromise({
-        output,
-        costEntry: {
-          agent: "evaluator" as AgentRole,
-          model: options.model ?? "codex",
-          inputTokens: 0, // Codex is subscription — no per-token tracking
-          outputTokens: 0,
-          costUsd: 0,
-          timestamp: new Date().toISOString(),
-        },
-        durationMs,
-        exitCode: code ?? 1,
-      });
+    // Run with optional structured output
+    agentLog("Starting evaluation...");
+    const result = await thread.run(fullPrompt, {
+      outputSchema,
     });
 
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      clearInterval(heartbeat);
-      proc.kill("SIGTERM");
-    }, 300_000);
-  });
+    // Extract output
+    const output = result.finalResponse ?? "";
+    const usage = result.usage;
+
+    // Log items in verbose mode
+    if (verbose && result.items) {
+      for (const item of result.items) {
+        if (item.type === "command_execution") {
+          agentLog(`Tool: Bash \`${(item as { command?: string }).command?.slice(0, 60) ?? "..."}\``);
+        } else if (item.type === "agent_message") {
+          agentLog(`Message: ${(item as { text?: string }).text?.slice(0, 80) ?? "..."}`);
+        }
+      }
+    }
+
+    clearInterval(heartbeat);
+    const durationMs = Date.now() - start;
+    agentLog(`Done (${Math.round(durationMs / 1000)}s, ${result.items?.length ?? 0} items)`);
+
+    return {
+      output,
+      costEntry: {
+        agent: "evaluator" as AgentRole,
+        model: "codex",
+        inputTokens: usage?.input_tokens ?? 0,
+        outputTokens: usage?.output_tokens ?? 0,
+        costUsd: 0, // Codex is subscription — no per-token cost
+        timestamp: new Date().toISOString(),
+      },
+      durationMs,
+    };
+  } catch (err) {
+    clearInterval(heartbeat);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    agentLog(`Error: ${errMsg}`);
+
+    return {
+      output: `[ERROR] Codex evaluator failed: ${errMsg}`,
+      costEntry: {
+        agent: "evaluator" as AgentRole,
+        model: "codex",
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        timestamp: new Date().toISOString(),
+      },
+      durationMs: Date.now() - start,
+    };
+  }
 }

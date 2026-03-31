@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.0",
+    "@openai/codex-sdk": "^0.117.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
