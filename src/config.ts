@@ -71,7 +71,7 @@ const DEFAULT_CONFIG: ShipwrightConfig = {
     scout: "claude-sonnet-4-20250514",
     planner: "claude-opus-4-20250514",
     generator: "claude-opus-4-20250514",
-    evaluator: "claude-sonnet-4-20250514",
+    evaluator: "codex",
     negotiator: "claude-opus-4-20250514",
     improver: "claude-sonnet-4-20250514",
   },

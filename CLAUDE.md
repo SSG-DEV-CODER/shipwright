@@ -23,7 +23,7 @@ PRD file → Parse → For each sprint:
 | Planner | opus | Read, Glob, Grep | PRD → sprint plan |
 | Negotiator | opus | Read | Contract mediation |
 | Generator | opus | Read, Write, Edit, Bash, Glob, Grep | Code implementation (ONLY writer) |
-| Evaluator | codex | Read, Bash, Glob, Grep | Adversarial review (NO write) |
+| Evaluator | codex (via Codex CLI) | Read, Bash, Glob, Grep | Adversarial review (NO write, read-only sandbox) |
 | Improver | sonnet | Read, Glob, Grep | Expertise updates |
 
 ### Key Principle: Adversarial Tension

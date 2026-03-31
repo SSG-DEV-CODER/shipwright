@@ -1,11 +1,15 @@
 /**
  * Evaluator Agent — adversarial code review
  * Tries to BREAK what the Generator built. Does NOT praise work.
+ *
+ * Uses Codex CLI when model is "codex" (true adversarial tension — different
+ * model than the generator). Falls back to Claude Code SDK for Claude models.
  */
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
+import { isCodexAvailable, runCodex } from "./codex-runner.js";
 import { extractJson } from "../lib/json-extract.js";
 import { extractEvalFromText } from "../lib/text-to-eval.js";
 import type { ShipwrightConfig } from "../config.js";
@@ -72,32 +76,53 @@ export async function runEvaluator(
     "Do NOT use any more tools after outputting the JSON.",
   );
 
-  const result = await runAgent({
-    role: EVALUATOR_ROLE,
-    systemPrompt,
-    userPrompt: parts.join("\n"),
-    tools: AGENT_TOOLS[EVALUATOR_ROLE],
-    model: config.models.evaluator,
-    maxTurns: 40, // Give evaluator more room to investigate AND produce output
-    workingDir: config.target.dir,
-  });
+  const userPrompt = parts.join("\n");
+  let rawOutput: string = "";
+
+  // Route to Codex or Claude based on model config
+  const isCodexModel = config.models.evaluator.toLowerCase().includes("codex");
+
+  if (isCodexModel && await isCodexAvailable()) {
+    console.log("[evaluator] Using Codex CLI (adversarial — different model than generator)");
+    const codexResult = await runCodex({
+      systemPrompt,
+      userPrompt,
+      workingDir: config.target.dir,
+      sandbox: "read-only",
+    });
+    rawOutput = codexResult.output;
+  } else {
+    if (isCodexModel) {
+      console.warn("[evaluator] Codex CLI not available, falling back to Claude");
+    }
+    const result = await runAgent({
+      role: EVALUATOR_ROLE,
+      systemPrompt,
+      userPrompt,
+      tools: AGENT_TOOLS[EVALUATOR_ROLE],
+      model: config.models.evaluator,
+      maxTurns: 40,
+      workingDir: config.target.dir,
+    });
+    rawOutput = rawOutput;
+  }
 
   // --- Three-strategy output extraction ---
 
   // Strategy 1: Try JSON extraction (best case — agent produced clean JSON)
   const jsonResult = extractJson<EvalResult>(
-    result.output,
+    rawOutput,
     ["passed", "overallScore", "scores"],
     null as unknown as EvalResult // intentionally null to detect failure
   );
 
   if (jsonResult && Array.isArray(jsonResult.scores) && jsonResult.scores.length > 0) {
-    return coerceEvalResult(jsonResult, result.output, config.pipeline.evalPassThreshold);
+    return coerceEvalResult(jsonResult, rawOutput, config.pipeline.evalPassThreshold);
   }
 
   // Strategy 2: Try text-to-eval extraction (agent wrote text, not JSON)
   const textResult = extractEvalFromText(
-    result.output,
+    rawOutput,
     contract.acceptanceCriteria,
     config.pipeline.evalPassThreshold
   );
@@ -109,7 +134,7 @@ export async function runEvaluator(
 
   // Strategy 3: Fallback — agent produced nothing parseable
   console.warn("[evaluator] Could not extract evaluation from agent output. Using defaults.");
-  return buildDefaultEvalResult(contract, result.output);
+  return buildDefaultEvalResult(contract, rawOutput);
 }
 
 /**
