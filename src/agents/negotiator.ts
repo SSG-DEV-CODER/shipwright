@@ -78,7 +78,7 @@ export async function negotiateContract(
       "",
       "**Implementation Steps (from Planner):**",
       ...currentContract.implementation.steps.map(
-        (s) => `${s.order}. ${s.description} → ${s.targetFiles.join(", ")}`
+        (s) => `${s.order}. ${s.description}${(s.targetFiles?.length ?? 0) > 0 ? ` → ${s.targetFiles.join(", ")}` : ""}`
       ),
       "",
       "**Evaluation Criteria (from Planner):**",

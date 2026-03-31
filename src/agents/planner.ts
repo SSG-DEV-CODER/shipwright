@@ -74,9 +74,15 @@ export async function runPlanner(
     evaluationCriteria: [],
   });
 
-  // Defensive coercion — LLMs sometimes return wrong types
+  // Defensive coercion — LLMs sometimes return wrong types or missing fields
+  const steps = (Array.isArray(parsed.steps) ? parsed.steps : []).map((s: Record<string, unknown>) => ({
+    order: typeof s.order === "number" ? s.order : 0,
+    description: typeof s.description === "string" ? s.description : String(s.description ?? ""),
+    targetFiles: Array.isArray(s.targetFiles) ? s.targetFiles : [],
+  }));
+
   return {
-    steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+    steps,
     filesToCreate: Array.isArray(parsed.filesToCreate) ? parsed.filesToCreate : [],
     filesToModify: Array.isArray(parsed.filesToModify) ? parsed.filesToModify : [],
     validationCommands: Array.isArray(parsed.validationCommands) ? parsed.validationCommands : [config.target.typecheckCmd],
