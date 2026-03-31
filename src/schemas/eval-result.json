@@ -1,9 +1,10 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "EvalResult",
-  "description": "Adversarial evaluation result — scores each acceptance criterion 1-10",
+  "description": "Adversarial evaluation result",
   "type": "object",
   "required": ["passed", "overallScore", "scores", "feedback", "failureReasons"],
+  "additionalProperties": false,
   "properties": {
     "passed": {
       "type": "boolean",
@@ -11,8 +12,6 @@
     },
     "overallScore": {
       "type": "number",
-      "minimum": 0,
-      "maximum": 10,
       "description": "Average of all individual scores (0-10)"
     },
     "scores": {
@@ -20,7 +19,8 @@
       "description": "One entry per acceptance criterion",
       "items": {
         "type": "object",
-        "required": ["criterionId", "criterion", "score", "reasoning"],
+        "required": ["criterionId", "criterion", "score", "reasoning", "specificFailures"],
+        "additionalProperties": false,
         "properties": {
           "criterionId": {
             "type": "string",
@@ -32,30 +32,28 @@
           },
           "score": {
             "type": "number",
-            "minimum": 0,
-            "maximum": 10,
-            "description": "Score 1-10. 7+ means acceptable. Below 7 means real problems."
+            "description": "Score 1-10. 7+ means acceptable."
           },
           "reasoning": {
             "type": "string",
-            "description": "Why this score — be specific with file paths and line numbers"
+            "description": "Why this score"
           },
           "specificFailures": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Specific failures found (file:line — what's wrong)"
+            "description": "Specific failures found"
           }
         }
       }
     },
     "feedback": {
       "type": "string",
-      "description": "Detailed feedback for the Generator to fix the issues found"
+      "description": "Detailed feedback for the Generator"
     },
     "failureReasons": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Top-level reasons the sprint failed (empty if passed)"
+      "description": "Top-level failure reasons"
     }
   }
 }
