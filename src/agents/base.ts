@@ -80,14 +80,15 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
 
   try {
     const stream = query({
-      model: options.model,
-      systemPrompt: options.systemPrompt,
       prompt: options.userPrompt,
-      tools: options.tools,
-      maxTurns: options.maxTurns ?? 50,
-      cwd: options.workingDir ?? process.cwd(),
-      permissionMode: "bypassPermissions",
-      allowDangerouslySkipPermissions: true,
+      options: {
+        model: options.model,
+        customSystemPrompt: options.systemPrompt,
+        allowedTools: options.tools,
+        maxTurns: options.maxTurns ?? 50,
+        cwd: options.workingDir ?? process.cwd(),
+        permissionMode: "bypassPermissions",
+      },
     });
 
     for await (const event of stream) {
