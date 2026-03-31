@@ -1,14 +1,15 @@
 /**
- * Base agent wrapper around Claude Agent SDK
+ * Unified agent runner — single interface for both Claude and Codex
  *
- * All agent invocations go through this module. It handles:
- * - SDK query() call with typed options
- * - Output extraction from async generator
- * - Cost tracking per invocation
- * - Heartbeat logging (every 60s, default)
- * - Verbose tool streaming (--verbose)
+ * Routes to the correct SDK based on the model string:
+ * - Model contains "codex" → @openai/codex-sdk (Codex CLI subscription)
+ * - Everything else → @anthropic-ai/claude-code (Claude CLI subscription)
+ *
+ * Both SDKs wrap their respective CLI binaries. No API billing beyond subscriptions.
  */
 
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { estimateCost, type CostEntry } from "../lib/cost.js";
 import type { ShipwrightConfig } from "../config.js";
 
@@ -24,6 +25,7 @@ export interface AgentOptions {
   workingDir?: string;
   persistSession?: boolean;
   verbose?: boolean;
+  outputSchema?: string; // Path to JSON Schema — used by Codex, ignored by Claude
 }
 
 export interface AgentResult {
@@ -46,7 +48,7 @@ export function getModelForRole(role: AgentRole, config: ShipwrightConfig): stri
   return config.models[role];
 }
 
-// Shared verbose flag — set by orchestrator before pipeline runs
+// Shared verbose flag
 let _verbose = false;
 export function setVerbose(v: boolean): void { _verbose = v; }
 export function isVerbose(): boolean { return _verbose; }
@@ -64,45 +66,39 @@ function agentLog(role: string, message: string): void {
 }
 
 /**
- * Run an agent via Claude Agent SDK query().
+ * Run an agent — routes to Claude or Codex SDK based on model string.
  *
- * This is the ONLY function that calls the SDK. All agents go through here.
- *
- * Features:
- * - Heartbeat every 60s while agent is running (always on)
- * - Verbose tool-use logging when verbose=true or global verbose is set
+ * This is the ONLY entry point for all agent invocations.
  */
 export async function runAgent(options: AgentOptions): Promise<AgentResult> {
+  const isCodex = options.model.toLowerCase().includes("codex");
+
+  if (isCodex) {
+    return runCodexAgent(options);
+  } else {
+    return runClaudeAgent(options);
+  }
+}
+
+// ─── Claude SDK Path ───────────────────────────────────────────────
+
+async function runClaudeAgent(options: AgentOptions): Promise<AgentResult> {
   const start = Date.now();
   const verbose = options.verbose ?? _verbose;
 
-  // --- Heartbeat timer ---
   let toolCallCount = 0;
   const heartbeat = setInterval(() => {
-    const elapsed = formatElapsed(Date.now() - start);
-    agentLog("HEARTBEAT", `${options.role} working (${elapsed} elapsed, ${toolCallCount} tool calls)`);
+    agentLog("HEARTBEAT", `${options.role} working (${formatElapsed(Date.now() - start)}, ${toolCallCount} tool calls)`);
   }, 60_000);
 
-  // Dynamic import of Claude Agent SDK
   let query: Function;
   try {
     const sdk = await import("@anthropic-ai/claude-code");
     query = sdk.query;
   } catch {
     clearInterval(heartbeat);
-    console.warn(`[${options.role}] Claude Agent SDK not available. Returning stub response.`);
-    return {
-      output: `[STUB] Agent ${options.role} would execute here with prompt: ${options.userPrompt.slice(0, 100)}...`,
-      costEntry: {
-        agent: options.role,
-        model: options.model,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
-        timestamp: new Date().toISOString(),
-      },
-      durationMs: Date.now() - start,
-    };
+    console.warn(`[${options.role}] Claude Code SDK not available. Returning stub.`);
+    return stubResult(options, start);
   }
 
   let fullOutput = "";
@@ -126,15 +122,12 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     let resultText = "";
 
     for await (const event of stream) {
-      // --- Verbose: log tool use in real-time ---
       if (event.type === "assistant" && Array.isArray(event.message?.content)) {
         for (const block of event.message.content) {
           if (block.type === "tool_use" && block.name) {
             toolCallCount++;
             if (verbose) {
-              // Extract a short description of what the tool is doing
-              const input = block.input as Record<string, unknown> | undefined;
-              const detail = extractToolDetail(block.name, input);
+              const detail = extractToolDetail(block.name, block.input as Record<string, unknown>);
               agentLog(options.role, `Tool: ${block.name}${detail ? ` ${detail}` : ""}`);
             }
           }
@@ -144,20 +137,15 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
           }
         }
       }
-
-      // Capture final result text
       if (event.type === "result") {
         if (event.usage) {
           inputTokens += event.usage.input_tokens ?? 0;
           outputTokens += event.usage.output_tokens ?? 0;
         }
-        if (event.text) {
-          resultText = event.text;
-        }
+        if (event.text) resultText = event.text;
       }
     }
 
-    // Prefer result.text (final output), then last assistant text with JSON, then full accumulated
     if (resultText) {
       fullOutput = resultText;
     } else if (lastAssistantText && lastAssistantText.includes("{")) {
@@ -165,20 +153,14 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[${options.role}] Agent error: ${errMsg}`);
-    if (fullOutput.trim()) {
-      console.warn(`[${options.role}] Returning partial output (${fullOutput.length} chars)`);
-    } else {
+    console.error(`[${options.role}] Claude agent error: ${errMsg}`);
+    if (!fullOutput.trim()) {
       fullOutput = `[ERROR] Agent ${options.role} failed: ${errMsg}`;
     }
   }
 
   clearInterval(heartbeat);
-
   const durationMs = Date.now() - start;
-  const costUsd = estimateCost(options.model, inputTokens, outputTokens);
-
-  // Final summary line (always shown)
   agentLog(options.role, `Done (${formatElapsed(durationMs)}, ${toolCallCount} tool calls, ${inputTokens + outputTokens} tokens)`);
 
   return {
@@ -188,30 +170,123 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       model: options.model,
       inputTokens,
       outputTokens,
-      costUsd,
+      costUsd: estimateCost(options.model, inputTokens, outputTokens),
       timestamp: new Date().toISOString(),
     },
     durationMs,
   };
 }
 
-/**
- * Extract a short description of what a tool call is doing.
- * Used for verbose logging.
- */
+// ─── Codex SDK Path ────────────────────────────────────────────────
+
+async function runCodexAgent(options: AgentOptions): Promise<AgentResult> {
+  const start = Date.now();
+  const verbose = options.verbose ?? _verbose;
+
+  const heartbeat = setInterval(() => {
+    agentLog("HEARTBEAT", `${options.role} [codex] working (${formatElapsed(Date.now() - start)})`);
+  }, 60_000);
+
+  try {
+    const { Codex } = await import("@openai/codex-sdk");
+
+    const codex = new Codex();
+    const thread = codex.startThread({
+      sandboxMode: "read-only",
+      workingDirectory: resolve(options.workingDir ?? process.cwd()),
+      skipGitRepoCheck: true,
+      approvalPolicy: "never",
+    });
+
+    const fullPrompt = [options.systemPrompt, "", "---", "", options.userPrompt].join("\n");
+
+    // Load output schema if provided
+    let outputSchema: unknown | undefined;
+    if (options.outputSchema) {
+      try {
+        outputSchema = JSON.parse(readFileSync(resolve(options.outputSchema), "utf-8"));
+      } catch (err) {
+        agentLog(options.role, `Warning: could not load output schema: ${err}`);
+      }
+    }
+
+    agentLog(options.role, "Starting [codex]...");
+    const result = await thread.run(fullPrompt, { outputSchema });
+
+    // Verbose: log items
+    if (verbose && result.items) {
+      for (const item of result.items) {
+        if (item.type === "command_execution") {
+          agentLog(options.role, `Tool: Bash \`${(item as { command?: string }).command?.slice(0, 60) ?? "..."}\``);
+        } else if (item.type === "agent_message") {
+          agentLog(options.role, `Message: ${(item as { text?: string }).text?.slice(0, 80) ?? "..."}`);
+        }
+      }
+    }
+
+    clearInterval(heartbeat);
+    const durationMs = Date.now() - start;
+    const usage = result.usage;
+    agentLog(options.role, `Done [codex] (${formatElapsed(durationMs)}, ${result.items?.length ?? 0} items)`);
+
+    return {
+      output: result.finalResponse ?? "",
+      costEntry: {
+        agent: options.role,
+        model: "codex",
+        inputTokens: usage?.input_tokens ?? 0,
+        outputTokens: usage?.output_tokens ?? 0,
+        costUsd: 0, // Subscription — no per-token cost
+        timestamp: new Date().toISOString(),
+      },
+      durationMs,
+    };
+  } catch (err) {
+    clearInterval(heartbeat);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    agentLog(options.role, `Codex error: ${errMsg}`);
+
+    return {
+      output: `[ERROR] Codex agent ${options.role} failed: ${errMsg}`,
+      costEntry: {
+        agent: options.role,
+        model: "codex",
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        timestamp: new Date().toISOString(),
+      },
+      durationMs: Date.now() - start,
+    };
+  }
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────
+
+function stubResult(options: AgentOptions, start: number): AgentResult {
+  return {
+    output: `[STUB] Agent ${options.role} would execute here with prompt: ${options.userPrompt.slice(0, 100)}...`,
+    costEntry: {
+      agent: options.role,
+      model: options.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      timestamp: new Date().toISOString(),
+    },
+    durationMs: Date.now() - start,
+  };
+}
+
 function extractToolDetail(toolName: string, input?: Record<string, unknown>): string {
   if (!input) return "";
-
   switch (toolName) {
     case "Write":
-      return input.file_path ? String(input.file_path).split("/").slice(-2).join("/") : "";
     case "Edit":
-      return input.file_path ? String(input.file_path).split("/").slice(-2).join("/") : "";
     case "Read":
       return input.file_path ? String(input.file_path).split("/").slice(-2).join("/") : "";
     case "Bash":
-      const cmd = String(input.command ?? "").slice(0, 60);
-      return cmd ? `\`${cmd}\`` : "";
+      return input.command ? `\`${String(input.command).slice(0, 60)}\`` : "";
     case "Glob":
       return input.pattern ? String(input.pattern) : "";
     case "Grep":
