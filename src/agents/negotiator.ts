@@ -82,12 +82,12 @@ export async function negotiateContract(
       ),
       "",
       "**Evaluation Criteria (from Planner):**",
-      ...currentContract.evaluationCriteria.map(
-        (ec) => `- ${ec.criterion}: ${ec.specificChecks.join("; ")}`
+      ...(currentContract.evaluationCriteria ?? []).map(
+        (ec) => `- ${ec.criterion ?? "unknown"}: ${(ec.specificChecks ?? []).join("; ") || "no specific checks"}`
       ),
       "",
       "**Validation Commands:**",
-      ...currentContract.implementation.validationCommands.map((c) => `- \`${c}\``),
+      ...(currentContract.implementation.validationCommands ?? []).map((c) => `- \`${c}\``),
       "",
       "Review this contract. Are the criteria specific and testable? Are edge cases covered?",
       "Produce JSON with: outcome (accepted/counter), contract (with any tightened criteria), reasoning.",

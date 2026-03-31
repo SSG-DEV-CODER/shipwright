@@ -165,7 +165,7 @@ export async function runPipeline(
       sprint.acceptanceCriteria,
       config.pipeline.contractRounds
     );
-    log("NEGOTIATE", `Contract signed. ${contract.evaluationCriteria.length} eval criteria, ${contract.negotiationRounds.length} rounds.`);
+    log("NEGOTIATE", `Contract signed. ${(contract.evaluationCriteria ?? []).length} eval criteria, ${(contract.negotiationRounds ?? []).length} rounds.`);
 
     sprintState.contract = contract;
     writeJsonFile(resolve(sprintDir, "contract.json"), contract);
