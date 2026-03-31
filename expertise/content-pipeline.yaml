@@ -1,0 +1,171 @@
+overview:
+  description: Content pipeline for CHOFF social publishing — ingests blog content, extracts atoms, generates platform-specific posts, publishes via social connectors with go-live gate enforcement
+  scope:
+    - Content pieces (pillar articles)
+    - Atom extraction (AI + heuristic fallback)
+    - Social post generation (4 platforms)
+    - Go-live gate enforcement
+    - Social credential management
+  key_files:
+    - packages/publish/src/lib/atom-extractor.ts
+    - packages/publish/src/lib/post-generator.ts
+    - packages/publish/src/lib/supabase-content.ts
+    - packages/publish/src/lib/supabase-go-live-gates.ts
+    - packages/publish/src/lib/social-connectors/types.ts
+
+core_implementation:
+  atom_extraction:
+    description: Breaks pillar content into 5-15 reusable atoms via GPT-4o-mini with heuristic fallback
+    files:
+      - packages/publish/src/lib/atom-extractor.ts
+    key_functions:
+      - "extractAtomsFromTextSmart(bodyText) — main entry, AI-first with fallback"
+      - "extractAtomsFromTextHeuristic(bodyText) — paragraph-split fallback"
+      - "extractAndPersistAtoms(pieceId) — orchestrator: fetch, extract, persist"
+    notes:
+      - "Atom types: hook, statistic, quote, step, framework, talking_point"
+      - "Platform affinity scored 0-1 for x, facebook, instagram"
+      - "Content body truncated to 8000 chars before OpenAI call"
+      - "Re-extraction is idempotent — deletes old atoms before inserting"
+      - "Status machine: draft → extracting → ready"
+
+  post_generation:
+    description: Formats atoms into platform-native posts with character limits
+    files:
+      - packages/publish/src/lib/post-generator.ts
+    key_functions:
+      - "formatForPlatform(atomTexts, platform) — deterministic formatter"
+      - "generatePost(options) — fetch atoms, format, persist, mark used"
+    notes:
+      - "X: 250 chars (not 280 — leaves room for #YachtOps)"
+      - "Facebook: 2000 chars, conversational with CTA"
+      - "Instagram: 2200 chars, 3-5 hashtags at end"
+      - "LinkedIn: 3000 chars, professional with engagement question"
+      - "Atoms marked status 'used' after post creation"
+
+  social_connectors:
+    description: Platform adapters implementing ConnectorAdapter interface
+    files:
+      - packages/publish/src/lib/social-connectors/types.ts
+      - packages/publish/src/lib/social-connectors/facebook.ts
+      - packages/publish/src/lib/social-connectors/instagram.ts
+      - packages/publish/src/lib/social-connectors/linkedin.ts
+      - packages/publish/src/lib/social-connectors/x-twitter.ts
+      - packages/publish/src/lib/social-connectors/credential-resolver.ts
+    key_functions:
+      - "ConnectorAdapter.validateCredentials(connectionId)"
+      - "ConnectorAdapter.publish(req, dryRun?)"
+      - "ConnectorAdapter.delete(req)"
+      - "resolveCredentials(connectionId, platform) — loads from DB, not env vars"
+    notes:
+      - "All credentials from social_account_credentials table, never env vars"
+      - "dryRun flag returns synthetic result without API call"
+      - "Rate limit detection: check res.status === 429"
+      - "Facebook photo posts use /{pageId}/photos with url field"
+      - "Instagram requires two-step: create container then publish"
+
+  go_live_gates:
+    description: Two-gate safety system before any live publishing
+    files:
+      - packages/publish/src/lib/supabase-go-live-gates.ts
+    key_functions:
+      - "canAttemptLivePublish(connectionId, platform) — central enforcement"
+      - "upsertGate(gate) — upsert on (connection_id, platform)"
+      - "recordGateAuditEvent(event) — fire-and-forget audit"
+    notes:
+      - "6 checks all must pass: supported platform, gate exists, kill switch off, gate A approved, gate B approved (captain), no blocker findings"
+      - "Gate record must be explicitly created — no auto-create"
+      - "Kill switch stores who activated and why"
+      - "Audit recording never throws — uses console.error on failure"
+
+  content_queries:
+    description: Thin query layer for content pipeline tables
+    files:
+      - packages/publish/src/lib/supabase-content.ts
+    key_functions:
+      - "getContentPieces({ status?, site?, limit? })"
+      - "getAtomsForPiece(pieceId) — returns [] on error, never throws"
+      - "getContentLineage(pieceId) — piece + atoms + posts tree"
+
+patterns:
+  - name: AI with heuristic fallback
+    description: "Try AI extraction first (GPT-4o-mini), return null on any failure, caller falls back to deterministic heuristic"
+    added_date: "2026-03-31"
+
+  - name: Credentials from DB not env vars
+    description: "Social credentials stored in social_account_credentials table, resolved at call time via resolveCredentials(connectionId, platform)"
+    added_date: "2026-03-31"
+
+  - name: Go-live gate enforcement
+    description: "Two-step approval (Gate A connector readiness + Gate B captain approval) before any live publish. Kill switch for emergency cutoff."
+    added_date: "2026-03-31"
+
+  - name: Multi-tenancy via site field
+    description: "site field ('crewmatch' | 'superyachtops') is the discriminator on content_pieces, social_posts, and connections. Always filter by site."
+    added_date: "2026-03-31"
+
+  - name: Idempotent re-extraction
+    description: "extractAndPersistAtoms deletes all existing atoms before inserting new ones — safe to call multiple times"
+    added_date: "2026-03-31"
+
+  - name: Dry-run publishing
+    description: "All connectors accept dryRun flag — returns synthetic result without making real API calls"
+    added_date: "2026-03-31"
+
+gotchas:
+  - description: "X post trimming uses 250 chars not 280 — leaves room for appended #YachtOps hashtag"
+    impact: medium
+    mitigation: "Use PLATFORM_LIMITS constant, account for suffix length"
+    added_date: "2026-03-31"
+
+  - description: "LinkedIn accessToken falls back through meta_access_token ?? bearer_token ?? null — column reuse is intentional but non-obvious"
+    impact: medium
+    mitigation: "Check credential-resolver.ts column mapping for each platform"
+    added_date: "2026-03-31"
+
+  - description: "live_posting_enabled and ready_for_live_publish are hardcoded false in mappers — controlled by go-live gates, not stored in DB"
+    impact: high
+    mitigation: "Use canAttemptLivePublish() for the real check, never trust mapper values"
+    added_date: "2026-03-31"
+
+  - description: "Facebook photo posts return post_id, feed posts return id — both must be tried for platformPostId"
+    impact: low
+    mitigation: "Use data.post_id ?? data.id pattern"
+    added_date: "2026-03-31"
+
+  - description: "Meta access tokens expire in 60 days — token_expires_at must be tracked manually in admin"
+    impact: high
+    mitigation: "Set token_expires_at when creating credentials, monitor for expiry"
+    added_date: "2026-03-31"
+
+  - description: "Gate record must be explicitly created before publish attempt — no auto-create behavior"
+    impact: high
+    mitigation: "Create gate record as part of account onboarding flow"
+    added_date: "2026-03-31"
+
+decisions:
+  - decision: "Credentials stored in DB table, not env vars"
+    reasoning: "Multiple sites with multiple accounts per platform. Env vars don't scale. DB allows per-account management via admin UI."
+    alternatives_considered:
+      - "Env vars per account (FACEBOOK_TOKEN_CM, FACEBOOK_TOKEN_SYO)"
+      - "Secrets manager (Infisical) per account"
+    added_date: "2026-03-31"
+
+  - decision: "Two-gate approval system for live publishing"
+    reasoning: "Prevents accidental live posts. Gate A proves connector works (dry-run). Gate B requires explicit captain approval for each account."
+    alternatives_considered:
+      - "Single approval gate"
+      - "No gates — just dry-run testing"
+    added_date: "2026-03-31"
+
+anti_patterns:
+  - "Never publish without checking canAttemptLivePublish() — bypassing gates risks accidental live posts"
+  - "Never cache credentials — always resolve fresh from DB at call time (tokens may have been rotated)"
+  - "Never SELECT * on social_account_credentials — contains sensitive tokens"
+
+metadata:
+  created: "2026-03-31"
+  last_validated: "2026-03-31"
+  source_sprints: []
+  stability: evolving
+  consecutive_no_change: 0

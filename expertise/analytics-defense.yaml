@@ -1,0 +1,153 @@
+overview:
+  description: Analytics and defense system for CHOFF watchtower — traffic monitoring via Umami, threat detection, bot defense rules, A/B experiments via GrowthBook
+  scope:
+    - Traffic analytics (Umami proxy)
+    - Threat event tracking (4 detection layers)
+    - Defense rules management
+    - A/B experiments (GrowthBook)
+    - Analytics snapshots (daily/weekly/monthly KPIs)
+  key_files:
+    - packages/watchtower/src/lib/supabase-threats.ts
+    - packages/watchtower/src/app/api/traffic/route.ts
+    - packages/watchtower/src/app/api/threats/route.ts
+    - packages/watchtower/src/app/api/defense/route.ts
+    - packages/watchtower/src/app/api/health/route.ts
+
+core_implementation:
+  traffic_proxy:
+    description: Umami analytics proxy — authenticates per request, fetches stats per registered website
+    files:
+      - packages/watchtower/src/app/api/traffic/route.ts
+    key_functions:
+      - "GET /api/traffic — authenticate with Umami, fetch all websites, parallel stats+active per site"
+    notes:
+      - "Re-authenticates on every request (no token caching)"
+      - "Fetches websites from Umami API, then parallel stats per site"
+      - "Uses AbortSignal.timeout(10000) per fetch"
+      - "Three response shapes: no token, no sites, sites with stats"
+      - "Active visitors fetched for last 24h window"
+      - "Umami response uses .data wrapper — must unwrap websitesResult.data"
+
+  threat_events:
+    description: Bot/scraper detection events from 4 layers
+    files:
+      - packages/watchtower/src/lib/supabase-threats.ts
+      - packages/watchtower/src/collections/ThreatEvents.ts
+    key_functions:
+      - "getThreatEvents({ source?, severity?, site?, hours?, limit? })"
+      - "getThreatRules({ activeOnly? })"
+      - "getAnalyticsSnapshots({ site?, type?, limit? })"
+      - "getExperiments({ status?, site? })"
+    notes:
+      - "4 detection sources: crowdsec, botd, middleware, honeypot"
+      - "8 threat types: bot, scraper, brute_force, ddos, credential_stuffing, scanner, spam, unknown"
+      - "4 severity levels: critical, high, medium, low"
+      - "4 action states: blocked, flagged, allowed, monitored"
+      - "All query functions return empty on error — never throw"
+      - "Stats aggregation done client-side in JS, not SQL GROUP BY"
+
+  defense_rules:
+    description: Agent-managed defense rules — IP bans, UA blocks, rate overrides
+    files:
+      - packages/watchtower/src/app/api/defense/route.ts
+      - packages/watchtower/src/collections/ThreatRules.ts
+    key_functions:
+      - "GET /api/defense — list rules, activeOnly defaults to true"
+      - "POST /api/defense — create rule with created_by default 'defense-agent'"
+    notes:
+      - "5 rule types: ip_ban, ip_range_ban, ua_block, rate_override, allowlist"
+      - "ip_range_ban requires captain approval semantics"
+      - "created_by tracks which agent or human created the rule"
+
+  experiments:
+    description: A/B test tracking linked to GrowthBook
+    files:
+      - packages/watchtower/src/collections/Experiments.ts
+    notes:
+      - "6 lifecycle states: draft, running, paused, completed, archived, cancelled"
+      - "growthbook_id field for cross-reference with GrowthBook dashboard"
+      - "results is manually synced JSON — not auto-populated"
+
+  health_check:
+    description: Platform service health checker
+    files:
+      - packages/watchtower/src/app/api/health/route.ts
+    notes:
+      - "Checks 6 services: hub(9010), bot(9000), publish(9020), watchtower(9030), umami(9031), growthbook(9032)"
+      - "HTTP-first with HTTPS fallback, 5s timeout"
+      - "Uses rejectUnauthorized:false via @ts-ignore for self-signed certs"
+
+patterns:
+  - name: Lazy Supabase client init
+    description: "Module-level let client = null, getSupabaseClient() initializes on first call. Throws at runtime if env vars missing, not at build time."
+    added_date: "2026-03-31"
+
+  - name: Error-swallowing queries
+    description: "All supabase-threats.ts functions return empty arrays/objects on error — never throw. Prevents one failed query from crashing the dashboard."
+    added_date: "2026-03-31"
+
+  - name: SWR client polling
+    description: "Frontend pages use SWR with 30s refreshInterval for real-time dashboard updates without WebSocket."
+    added_date: "2026-03-31"
+
+  - name: force-dynamic on API routes
+    description: "All data-fetching API routes use export const dynamic = 'force-dynamic' to disable Next.js static caching."
+    added_date: "2026-03-31"
+
+gotchas:
+  - description: "Umami API returns data in .data wrapper — must unwrap websitesResult.data, not use bare array"
+    impact: high
+    mitigation: "Always access .data property on Umami API responses"
+    added_date: "2026-03-31"
+
+  - description: "Traffic API re-authenticates with Umami on every request — no token caching"
+    impact: medium
+    mitigation: "Umami tokens are short-lived by design; caching would break on rotation"
+    added_date: "2026-03-31"
+
+  - description: "All Payload collections need timestamps:false — pre-existing tables lack Payload-managed updated_at"
+    impact: high
+    mitigation: "Always set timestamps:false on collections backed by migration-created tables"
+    added_date: "2026-03-31"
+
+  - description: "push:false mandatory on ALL Payload collections — Payload drops custom columns/indexes without it"
+    impact: critical
+    mitigation: "Never omit push:false in any Payload collection config"
+    added_date: "2026-03-31"
+
+  - description: "Bounce rate calculated client-side as bounces/visits * 100 — not a server-side metric"
+    impact: low
+    mitigation: "Keep calculation in frontend, not API"
+    added_date: "2026-03-31"
+
+  - description: "ip_range_ban rules require captain approval semantics — defense agent cannot self-approve wide bans"
+    impact: high
+    mitigation: "Create rule with pending status, require manual captain approval for activation"
+    added_date: "2026-03-31"
+
+decisions:
+  - decision: "Umami for web analytics instead of GA4"
+    reasoning: "Self-hosted, privacy-first, no cookie banners needed. GA4 available as supplement via research skills."
+    alternatives_considered:
+      - "GA4 only"
+      - "Plausible Analytics"
+    added_date: "2026-03-31"
+
+  - decision: "GrowthBook for A/B testing"
+    reasoning: "Open source, self-hosted via Docker, supports feature flags + experiments. Experiment results manually synced to Payload."
+    alternatives_considered:
+      - "LaunchDarkly"
+      - "Custom A/B framework"
+    added_date: "2026-03-31"
+
+anti_patterns:
+  - "Never use SQL GROUP BY for threat stats in Supabase — do aggregation client-side (Supabase REST API limitations)"
+  - "Never cache Umami auth tokens — they expire and the re-auth is intentional"
+  - "Never create Payload collections without push:false and timestamps:false on migration-backed tables"
+
+metadata:
+  created: "2026-03-31"
+  last_validated: "2026-03-31"
+  source_sprints: []
+  stability: evolving
+  consecutive_no_change: 0

@@ -112,18 +112,68 @@ async function runExpertise(args: ParsedArgs): Promise<void> {
       }
       break;
     }
-    case "validate":
-      console.log("Expertise validate not yet implemented. Coming in Sprint 5.");
+    case "validate": {
+      const domain = args.positional[1];
+      if (!domain) { console.error("Usage: shipwright expertise validate <domain>"); process.exit(1); }
+      const valCtx = loadExpertise(config.expertise.dir);
+      const file = valCtx.files.find((f) => f.domain === domain);
+      if (!file) { console.error(`Expertise file not found: ${domain}`); process.exit(1); }
+      const { validateExpertise } = await import("./expertise/validator.js");
+      const result = validateExpertise(file, config.target.dir);
+      console.log(`\n⚓ Validation: ${domain}`);
+      console.log(`   Claims: ${result.totalClaims} total, ${result.validClaims} valid`);
+      if (result.missingFiles.length > 0) {
+        console.log(`   Missing files: ${result.missingFiles.join(", ")}`);
+      }
+      if (result.issues.length > 0) {
+        console.log(`   Issues:`);
+        for (const issue of result.issues) console.log(`     - ${issue}`);
+      }
+      if (result.issues.length === 0) console.log("   No issues found.");
+      console.log("");
       break;
-    case "improve":
-      console.log("Expertise improve not yet implemented. Coming in Sprint 5.");
+    }
+    case "improve": {
+      const impDomain = args.positional[1];
+      if (!impDomain) { console.error("Usage: shipwright expertise improve <domain>"); process.exit(1); }
+      console.log(`Running self-improve for ${impDomain}... (requires Claude Agent SDK)`);
+      const { runImprover } = await import("./agents/improver.js");
+      const { applyExpertiseUpdate } = await import("./expertise/updater.js");
+      const { resolve: resolvePath } = await import("path");
+      const impResult = await runImprover(config, { sprintId: "manual", title: "Manual improve", acceptanceCriteria: [], implementation: { steps: [], filesToCreate: [], filesToModify: [], validationCommands: [] }, evaluationCriteria: [], negotiationRounds: [] }, [], `Domain: ${impDomain}`);
+      const expPath = resolvePath(config.expertise.dir, `${impDomain}.yaml`);
+      const { changesApplied } = applyExpertiseUpdate(expPath, impResult, config.expertise.maxLines);
+      console.log(`Applied ${changesApplied.length} changes to ${impDomain}.yaml`);
+      for (const c of changesApplied) console.log(`  - ${c}`);
       break;
-    case "create":
-      console.log("Expertise create not yet implemented. Coming in Sprint 5.");
+    }
+    case "create": {
+      const newDomain = args.positional[1];
+      if (!newDomain) { console.error("Usage: shipwright expertise create <domain>"); process.exit(1); }
+      const { resolve: resolvePath2 } = await import("path");
+      const { copyFileSync, existsSync } = await import("fs");
+      const targetPath = resolvePath2(config.expertise.dir, `${newDomain}.yaml`);
+      if (existsSync(targetPath)) { console.error(`Already exists: ${targetPath}`); process.exit(1); }
+      const templatePath = resolvePath2(config.expertise.dir, "_template.yaml");
+      if (!existsSync(templatePath)) { console.error("Template not found: expertise/_template.yaml"); process.exit(1); }
+      copyFileSync(templatePath, targetPath);
+      console.log(`Created expertise file: ${targetPath}`);
+      console.log(`Edit the file, then run: shipwright expertise improve ${newDomain}`);
       break;
-    case "question":
-      console.log("Expertise question not yet implemented. Coming in Sprint 5.");
+    }
+    case "question": {
+      const qDomain = args.positional[1];
+      const question = args.positional.slice(2).join(" ");
+      if (!qDomain || !question) { console.error("Usage: shipwright expertise question <domain> <question>"); process.exit(1); }
+      const qCtx = loadExpertise(config.expertise.dir);
+      const qFile = qCtx.files.find((f) => f.domain === qDomain);
+      if (!qFile) { console.error(`Expertise file not found: ${qDomain}`); process.exit(1); }
+      const { formatExpertiseForPrompt } = await import("./expertise/loader.js");
+      console.log(`\n⚓ Answering from ${qDomain} expertise:\n`);
+      console.log(formatExpertiseForPrompt({ files: [qFile], totalLines: qFile.lineCount }));
+      console.log(`\nTo get AI-powered answers, use the full pipeline or Claude Code with this expertise as context.`);
       break;
+    }
     default:
       console.error(`Unknown expertise command: ${subcmd}`);
       console.error("Available: list, validate, improve, create, question");
@@ -161,8 +211,36 @@ async function showStatus(): Promise<void> {
 }
 
 async function resumePipeline(): Promise<void> {
-  // TODO: Sprint 5 — resume from checkpoint
-  console.log("Resume not yet implemented. Coming in Sprint 5.");
+  const statePath = ".shipwright/state.json";
+  if (!fileExists(statePath)) {
+    console.log("No pipeline state to resume. Run `shipwright build <prd>` first.");
+    return;
+  }
+
+  const state = readJsonFile<PipelineState>(statePath);
+  if (!state) {
+    console.log("Could not read pipeline state.");
+    return;
+  }
+
+  if (state.phase === "complete") {
+    console.log("Pipeline already completed successfully. Nothing to resume.");
+    return;
+  }
+
+  console.log(`\n⚓ Resuming pipeline from sprint ${state.currentSprintIndex + 1}...`);
+  console.log(`   PRD: ${state.prdPath}`);
+  console.log(`   Phase: ${state.phase}`);
+  console.log(`   Sprint: ${state.currentSprintIndex + 1}/${state.sprints.length}\n`);
+
+  const config = loadConfig();
+
+  // Resume from the failed/in-progress sprint
+  const result = await runPipeline(config, state.prdPath, {
+    sprintFilter: state.currentSprintIndex + 1,
+  });
+
+  process.exit(result.status === "complete" ? 0 : 1);
 }
 
 async function initConfig(): Promise<void> {

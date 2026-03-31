@@ -1,0 +1,126 @@
+overview:
+  description: Next.js 16 + Payload CMS 3.x patterns used across CHOFF platform — shared conventions for hub, publish, and watchtower apps
+  scope:
+    - Payload CMS collection configuration
+    - Next.js App Router conventions
+    - Supabase client initialization
+    - API route patterns
+    - UI component patterns (Tailwind v4 + shadcn/ui)
+  key_files:
+    - packages/hub/src/payload.config.ts
+    - packages/publish/src/payload.config.ts
+    - packages/watchtower/src/payload.config.ts
+
+core_implementation:
+  payload_config:
+    description: Standard Payload CMS configuration pattern
+    files:
+      - packages/hub/src/payload.config.ts
+      - packages/publish/src/payload.config.ts
+      - packages/watchtower/src/payload.config.ts
+    notes:
+      - "Always use push:false on db adapter — prevents Payload from dropping custom columns"
+      - "Always use idType:'uuid' — consistent with Supabase schema"
+      - "Each app has its own admin user collection (users, pub-users, watch-users)"
+      - "lexicalEditor() for rich text fields"
+      - "postgresAdapter with DATABASE_URL from env"
+
+  collection_pattern:
+    description: Standard Payload collection for migration-backed tables
+    notes:
+      - "slug: kebab-case, dbName: snake_case (matching migration table name)"
+      - "timestamps: false — mandatory for pre-existing tables"
+      - "access: all operations () => true (auth at infra/Tailscale level)"
+      - "admin.group for sidebar organization"
+      - "Fields match migration columns exactly"
+      - "Status fields use select type with defined options"
+
+  api_route_pattern:
+    description: Standard Next.js API route pattern
+    notes:
+      - "export const dynamic = 'force-dynamic' on all data routes"
+      - "try/catch with { error: String(err) } and status 500"
+      - "Query params via NextRequest searchParams"
+      - "Minimal validation — DB constraints handle most"
+
+  supabase_client:
+    description: Lazy-initialized Supabase client
+    notes:
+      - "Module-level let client = null"
+      - "getSupabaseClient() initializes on first call"
+      - "Accepts SUPABASE_SERVICE_KEY or SUPABASE_SERVICE_ROLE_KEY"
+      - "Throws at runtime if env vars missing, not at build time"
+      - "Identical pattern across all 3 apps"
+
+  frontend_pattern:
+    description: Client-side page with SWR data fetching
+    notes:
+      - "'use client' directive on interactive pages"
+      - "SWR with refreshInterval for polling (5s-30s)"
+      - "Skeleton loading states"
+      - "Conditional render: loading → error → empty → data"
+      - "Tailwind v4 with @theme inline block in globals.css"
+      - "OKLCh color space for theme variables"
+
+patterns:
+  - name: push:false on all collections
+    description: "Payload CMS db adapter must use push:false. Without it, Payload schema sync drops custom columns (vectors, indexes, extra fields)."
+    added_date: "2026-03-31"
+
+  - name: timestamps:false on migration-backed collections
+    description: "Collections backed by SQL migration tables must set timestamps:false. Tables have their own created_at/updated_at, not Payload-managed."
+    added_date: "2026-03-31"
+
+  - name: Route groups for multi-concern apps
+    description: "Use Next.js route groups: (site) for public, (content) for pipeline, (social) for accounts, (analytics) for monitoring, (payload) for admin."
+    added_date: "2026-03-31"
+
+  - name: cn() utility for conditional classes
+    description: "Always use cn() from lib/utils.ts (clsx + tailwind-merge) for conditional Tailwind classes."
+    added_date: "2026-03-31"
+
+  - name: Separate Payload admin user collections
+    description: "Each Payload instance has its own user collection. Hub uses 'users', publish uses 'pub-users', watchtower uses 'watch-users'."
+    added_date: "2026-03-31"
+
+gotchas:
+  - description: "payload_locked_documents_rels — new Payload collections MUST add slug_id uuid columns and indexes to this table or edit/detail views silently blank"
+    impact: critical
+    mitigation: "Add migration for each new collection: ALTER TABLE payload_locked_documents_rels ADD COLUMN <slug>_id uuid"
+    added_date: "2026-03-31"
+
+  - description: "No root layout.tsx — each route group has its own layout. Do NOT add a shared root layout."
+    impact: high
+    mitigation: "Create layout.tsx inside each route group, not at app/ root"
+    added_date: "2026-03-31"
+
+  - description: "Tailwind v4 uses @theme inline block in globals.css, not tailwind.config.ts"
+    impact: medium
+    mitigation: "Define colors as OKLCh CSS vars in @theme block, not in JS config"
+    added_date: "2026-03-31"
+
+  - description: "shadcn/ui components in src/components/ui/ are managed by shadcn CLI — do NOT edit them directly"
+    impact: medium
+    mitigation: "Create custom composites in a separate directory"
+    added_date: "2026-03-31"
+
+  - description: "Supabase client lazy init can fail at runtime if env vars missing — will NOT fail at build time"
+    impact: medium
+    mitigation: "Check env vars in health endpoint, not at module load"
+    added_date: "2026-03-31"
+
+decisions: []
+
+anti_patterns:
+  - "Never omit push:false on Payload db adapter"
+  - "Never add timestamps to collections on migration-backed tables"
+  - "Never edit shadcn/ui component files directly"
+  - "Never add a root layout.tsx when using route groups"
+  - "Never hardcode Supabase URLs — use env vars"
+
+metadata:
+  created: "2026-03-31"
+  last_validated: "2026-03-31"
+  source_sprints: []
+  stability: evolving
+  consecutive_no_change: 0

@@ -1,0 +1,55 @@
+# Shipwright Build Configuration
+# Target: choff-site-template (Phase 1 of platform restructure)
+#
+# Usage:
+#   cd /path/to/target/workspace
+#   bun /path/to/shipwright/src/index.ts build \
+#     /Users/maffy/Developer/choff-platform/docs/plans/PRD-platform-restructure-phase-1.md \
+#     --config /Users/maffy/Developer/shipwright/builds/choff-site-template.yaml
+
+target:
+  dir: "."
+  language: "typescript"
+  runtime: "bun"
+  typecheck_cmd: "bunx tsc --noEmit"
+  test_cmd: "bun test"
+  lint_cmd: "bunx tsc --noEmit"
+
+models:
+  scout: "claude-sonnet-4-20250514"
+  planner: "claude-opus-4-20250514"
+  generator: "claude-opus-4-20250514"
+  evaluator: "codex"
+  negotiator: "claude-opus-4-20250514"
+  improver: "claude-sonnet-4-20250514"
+
+pipeline:
+  max_retries: 3
+  max_scouts: 5
+  contract_rounds: 2
+  eval_pass_threshold: 7.0
+
+expertise:
+  dir: "/Users/maffy/Developer/shipwright/expertise"
+  auto_improve: true
+  max_lines: 1000
+
+# Reference codebases — scouts explore these for patterns (read-only)
+references:
+  - path: "/Users/maffy/Developer/choff-platform/packages/publish"
+    label: "CHOFF Publish (content pipeline + social connectors)"
+  - path: "/Users/maffy/Developer/choff-platform/packages/watchtower"
+    label: "CHOFF Watchtower (analytics + defense)"
+  - path: "/Users/maffy/Developer/choff-platform/packages/hub"
+    label: "CHOFF Hub (Payload CMS patterns + dashboard)"
+
+tracking:
+  progress_file: "PROGRESS.md"
+  log_file: "LOG.md"
+  git_commits: true
+  commit_prefix: "shipwright:"
+
+limits:
+  max_cost_per_sprint: 10.00
+  max_cost_per_build: 50.00
+  max_tokens_per_agent_call: 200000
