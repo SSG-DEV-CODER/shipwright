@@ -38,15 +38,15 @@ export async function runGenerator(
 
   for (const step of contract.implementation.steps) {
     parts.push(`${step.order}. ${step.description}`);
-    if (step.targetFiles.length > 0) {
+    if ((step.targetFiles ?? []).length > 0) {
       parts.push(`   Files: ${step.targetFiles.join(", ")}`);
     }
   }
 
   parts.push(
     "",
-    `## Files to Create: ${contract.implementation.filesToCreate.join(", ") || "none"}`,
-    `## Files to Modify: ${contract.implementation.filesToModify.join(", ") || "none"}`,
+    `## Files to Create: ${(contract.implementation.filesToCreate ?? []).join(", ") || "none"}`,
+    `## Files to Modify: ${(contract.implementation.filesToModify ?? []).join(", ") || "none"}`,
     "",
     `## Acceptance Criteria`,
   );
@@ -63,11 +63,11 @@ export async function runGenerator(
     parts.push(`- \`${cmd}\``);
   }
 
-  if (contract.evaluationCriteria.length > 0) {
+  if ((contract.evaluationCriteria ?? []).length > 0) {
     parts.push("", `## Evaluator Will Check`);
-    for (const ec of contract.evaluationCriteria) {
-      parts.push(`- ${ec.criterion}`);
-      for (const check of ec.specificChecks) {
+    for (const ec of contract.evaluationCriteria ?? []) {
+      parts.push(`- ${ec.criterion ?? "unknown criterion"}`);
+      for (const check of ec.specificChecks ?? []) {
         parts.push(`  - ${check}`);
       }
     }
@@ -96,7 +96,7 @@ export async function runGenerator(
     for (const reason of previousFeedback.failureReasons) {
       parts.push(`- ${reason}`);
     }
-    for (const score of previousFeedback.scores.filter((s) => s.score < 7)) {
+    for (const score of (previousFeedback.scores ?? []).filter((s) => s.score < 7)) {
       parts.push(`- [${score.criterionId}] ${score.criterion}: ${score.score}/10 — ${score.reasoning}`);
       for (const failure of score.specificFailures) {
         parts.push(`  - ${failure}`);

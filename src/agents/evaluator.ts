@@ -29,11 +29,11 @@ export async function runEvaluator(
     parts.push(`- [${ac.id}] ${ac.text}`);
   }
 
-  if (contract.evaluationCriteria.length > 0) {
+  if ((contract.evaluationCriteria ?? []).length > 0) {
     parts.push("", `## Additional Evaluation Criteria`);
-    for (const ec of contract.evaluationCriteria) {
-      parts.push(`- [${ec.id}] ${ec.criterion} (weight: ${ec.weight})`);
-      for (const check of ec.specificChecks) {
+    for (const ec of contract.evaluationCriteria ?? []) {
+      parts.push(`- [${ec.id}] ${ec.criterion ?? "unknown"} (weight: ${ec.weight ?? 1})`);
+      for (const check of ec.specificChecks ?? []) {
         parts.push(`  - ${check}`);
       }
     }
@@ -43,7 +43,7 @@ export async function runEvaluator(
     "",
     `## Validation Commands to Run`,
   );
-  for (const cmd of contract.implementation.validationCommands) {
+  for (const cmd of contract.implementation.validationCommands ?? []) {
     parts.push(`- \`${cmd}\``);
   }
 

@@ -186,7 +186,7 @@ export function formatScoutReports(reports: ScoutReport[]): string {
   for (const report of reports) {
     parts.push(`### ${report.focus} (${report.durationMs}ms)`);
 
-    if (report.findings.relevantFiles.length > 0) {
+    if ((report.findings?.relevantFiles ?? []).length > 0) {
       parts.push("**Relevant files:**");
       for (const f of report.findings.relevantFiles.slice(0, 20)) {
         parts.push(`- ${f}`);
