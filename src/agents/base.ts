@@ -85,7 +85,7 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
         model: options.model,
         customSystemPrompt: options.systemPrompt,
         allowedTools: options.tools,
-        maxTurns: options.maxTurns ?? 50,
+        ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
         cwd: options.workingDir ?? process.cwd(),
         permissionMode: "bypassPermissions",
       },

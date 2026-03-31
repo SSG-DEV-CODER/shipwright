@@ -1,93 +1,86 @@
 /**
- * Planner Agent — produces implementation plans from PRD + expertise + scout reports
+ * Planner Agent — produces a sprint plan FILE from PRD + expertise + scout reports
+ *
+ * The planner writes a markdown plan file to disk. The generator then reads
+ * this file and implements it top to bottom (agent-experts pattern).
  */
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
-import { extractJson } from "../lib/json-extract.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { SprintPlan } from "../intake/types.js";
-import type { SprintContract, ScoutReport } from "../pipeline/types.js";
 
 const PLANNER_ROLE: AgentRole = "planner";
 
-export interface PlannerOutput {
-  steps: Array<{
-    order: number;
-    description: string;
-    targetFiles: string[];
-  }>;
-  filesToCreate: string[];
-  filesToModify: string[];
-  validationCommands: string[];
-  evaluationCriteria: Array<{
-    criterion: string;
-    specificChecks: string[];
-  }>;
-}
-
+/**
+ * Run the planner agent. It writes a plan file to planFilePath.
+ * Returns the raw output text (the plan is on disk, not in the return value).
+ */
 export async function runPlanner(
   config: ShipwrightConfig,
   sprint: SprintPlan,
+  planFilePath: string,
+  prdFilePath: string,
   scoutReports: string,
   expertiseContext: string
-): Promise<PlannerOutput> {
+): Promise<string> {
   const systemPrompt = loadPromptFile("planner.md");
 
-  const userPrompt = [
-    `## Sprint to Plan`,
-    `Title: ${sprint.title}`,
+  const parts: string[] = [
+    `## Task`,
+    `Create a sprint implementation plan and write it to: ${planFilePath}`,
+    "",
+    `## Sprint: ${sprint.title}`,
     `Description: ${sprint.description}`,
     "",
-    sprint.acceptanceCriteria.length > 0
-      ? `## Acceptance Criteria\n${sprint.acceptanceCriteria.map((c) => `- [${c.id}] ${c.text}`).join("\n")}`
-      : "",
-    sprint.fileTargets.length > 0
-      ? `## Expected File Targets\n${sprint.fileTargets.map((f) => `- ${f}`).join("\n")}`
-      : "",
+    `## PRD File`,
+    `Read the full PRD at: ${prdFilePath}`,
     "",
-    scoutReports,
-    "",
-    expertiseContext,
-    "",
-    "Produce your plan as JSON with: steps, filesToCreate, filesToModify, validationCommands, evaluationCriteria.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (sprint.acceptanceCriteria.length > 0) {
+    parts.push("## Acceptance Criteria (from PRD):");
+    for (const ac of sprint.acceptanceCriteria) {
+      parts.push(`- [${ac.id}] ${ac.text}`);
+    }
+    parts.push("");
+  }
+
+  if (sprint.fileTargets.length > 0) {
+    parts.push("## Expected File Targets:");
+    for (const f of sprint.fileTargets) {
+      parts.push(`- ${f}`);
+    }
+    parts.push("");
+  }
+
+  if (scoutReports) {
+    parts.push(scoutReports, "");
+  }
+
+  if (expertiseContext) {
+    parts.push(expertiseContext, "");
+  }
+
+  parts.push(
+    "Write the complete plan to the file path specified above.",
+    "Follow the exact plan format from your system prompt.",
+    "Each step must be a small, atomic feature with exact file paths.",
+    "The generator will read this file and implement it top to bottom.",
+  );
 
   const result = await runAgent({
     role: PLANNER_ROLE,
     systemPrompt,
-    userPrompt,
+    userPrompt: parts.join("\n"),
     tools: AGENT_TOOLS[PLANNER_ROLE],
     model: config.models.planner,
-    maxTurns: 20,
+    maxTurns: undefined, // Unlimited
     workingDir: config.target.dir,
   });
 
-  const parsed = extractJson<PlannerOutput>(result.output, ["steps", "filesToCreate"], {
-    steps: [],
-    filesToCreate: [],
-    filesToModify: [],
-    validationCommands: [config.target.typecheckCmd],
-    evaluationCriteria: [],
-  });
-
-  // Defensive coercion — LLMs sometimes return wrong types or missing fields
-  const steps = (Array.isArray(parsed.steps) ? parsed.steps : []).map((s: Record<string, unknown>) => ({
-    order: typeof s.order === "number" ? s.order : 0,
-    description: typeof s.description === "string" ? s.description : String(s.description ?? ""),
-    targetFiles: Array.isArray(s.targetFiles) ? s.targetFiles : [],
-  }));
-
-  return {
-    steps,
-    filesToCreate: Array.isArray(parsed.filesToCreate) ? parsed.filesToCreate : [],
-    filesToModify: Array.isArray(parsed.filesToModify) ? parsed.filesToModify : [],
-    validationCommands: Array.isArray(parsed.validationCommands) ? parsed.validationCommands : [config.target.typecheckCmd],
-    evaluationCriteria: Array.isArray(parsed.evaluationCriteria) ? parsed.evaluationCriteria : [],
-  };
+  return result.output;
 }
 
 function loadPromptFile(filename: string): string {
@@ -95,6 +88,6 @@ function loadPromptFile(filename: string): string {
   try {
     return readFileSync(promptPath, "utf-8");
   } catch {
-    return `You are a ${filename.replace(".md", "")} agent.`;
+    return `You are a planner. Write a step-by-step implementation plan to the specified file.`;
   }
 }

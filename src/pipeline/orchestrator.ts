@@ -1,10 +1,17 @@
 /**
  * Pipeline Orchestrator — the main adversarial build loop
  *
- * For each sprint: Scout → Plan → Build → Evaluate → Retry → Improve → Commit
+ * For each sprint: Scout → Plan (file) → Negotiate → Build → Evaluate → Retry → Improve → Commit
+ *
+ * Key design decisions (docs/decisions/001-generator-pattern.md):
+ * - Plan written to file, generator reads it (not passed in prompt)
+ * - Feedback written to file, generator reads it on retry
+ * - Git diff after build detects what was created (not generator self-report)
+ * - maxTurns unlimited for generator and evaluator
  */
 
 import { resolve } from "path";
+import { execSync } from "child_process";
 import { parsePRD } from "../intake/prd-parser.js";
 import { deriveSprints } from "../intake/sprint-planner.js";
 import { loadExpertise, formatExpertiseForPrompt } from "../expertise/loader.js";
@@ -12,13 +19,12 @@ import { runScouts, formatScoutReports } from "../agents/scout.js";
 import { runPlanner } from "../agents/planner.js";
 import { runGenerator } from "../agents/generator.js";
 import { runEvaluator } from "../agents/evaluator.js";
-import { negotiateContract } from "../agents/negotiator.js";
 import { runImprover } from "../agents/improver.js";
 import { applyExpertiseUpdate } from "../expertise/updater.js";
 import { writeProgress } from "../tracking/progress.js";
 import { BuildLog } from "../tracking/log.js";
-import { gitCommit } from "../tracking/git.js";
-import { writeJsonFile, ensureDir, readText } from "../lib/fs.js";
+import { gitCommit, isGitRepo, gitInit } from "../tracking/git.js";
+import { writeJsonFile, writeText, ensureDir, readText, fileExists } from "../lib/fs.js";
 import { CostLedger } from "../lib/cost.js";
 import type { ShipwrightConfig } from "../config.js";
 import type {
@@ -27,6 +33,7 @@ import type {
   SprintState,
   SprintContract,
   BuildAttempt,
+  EvalResult,
   ScoutReport,
 } from "./types.js";
 import type { SprintPlan } from "../intake/types.js";
@@ -48,9 +55,19 @@ export async function runPipeline(
   ensureDir(stateDir);
   const buildLog = new BuildLog(config, prdPath);
 
+  // Ensure target is a git repo (for diff tracking)
+  if (!isGitRepo(config.target.dir)) {
+    gitInit(config.target.dir);
+    // Initial commit so we have a baseline for diff
+    try {
+      execSync('git add -A && git commit -m "init: empty workspace" --allow-empty', {
+        cwd: config.target.dir, stdio: "pipe",
+      });
+    } catch { /* may already have commits */ }
+  }
+
   // --- Phase: PARSING ---
   log("PARSE", `Reading PRD: ${prdPath}`);
-  const prdRawText = readText(prdPath); // Full PRD text for generator context
   const prd = parsePRD(prdPath);
   log("PARSE", `Title: ${prd.title}`);
   log("PARSE", `Acceptance criteria: ${prd.acceptanceCriteria.length}`);
@@ -58,7 +75,6 @@ export async function runPipeline(
   const allSprints = deriveSprints(prd);
   log("PARSE", `Derived ${allSprints.length} sprints`);
 
-  // Filter to specific sprint if requested
   const sprints = options.sprintFilter
     ? allSprints.filter((_, i) => i + 1 === options.sprintFilter)
     : allSprints;
@@ -98,7 +114,6 @@ export async function runPipeline(
     const sprintState = state.sprints[i];
     const sprint = sprintState.plan;
     state.currentSprintIndex = i;
-    state.phase = "scouting";
 
     log("SPRINT", `\n${"=".repeat(60)}`);
     log("SPRINT", `Sprint ${i + 1}/${state.sprints.length}: ${sprint.title}`);
@@ -107,26 +122,24 @@ export async function runPipeline(
     const sprintStart = Date.now();
     sprintState.status = "in_progress";
 
+    const sprintDir = resolve(stateDir, `sprint-${String(i + 1).padStart(3, "0")}`);
+    ensureDir(sprintDir);
     buildLog.logSprintStart(i + 1, sprint.title);
 
     // --- Scout ---
     state.phase = "scouting";
     saveState(stateDir, state);
-    log("SCOUT", `Running ${Math.min(config.pipeline.maxScouts, 3)} scouts...`);
+    log("SCOUT", "Running scouts...");
 
     let scoutReports: ScoutReport[] = [];
     try {
       scoutReports = await runScouts(config, sprint, expertiseText);
       const totalFiles = scoutReports.reduce((sum, r) => sum + (r.findings?.relevantFiles?.length ?? 0), 0);
-      log("SCOUT", `Scouts complete. Found ${totalFiles} relevant files across ${scoutReports.length} reports.`);
+      log("SCOUT", `Scouts complete. Found ${totalFiles} relevant files.`);
     } catch (err) {
       log("SCOUT", `Scout failed (non-fatal): ${err}`);
     }
     const scoutText = formatScoutReports(scoutReports);
-
-    // Save scout reports
-    const sprintDir = resolve(stateDir, `sprint-${String(i + 1).padStart(3, "0")}`);
-    ensureDir(sprintDir);
     writeJsonFile(resolve(sprintDir, "scout-reports.json"), scoutReports);
     if (scoutReports.length > 0) {
       buildLog.logScoutReports(scoutReports);
@@ -145,36 +158,32 @@ export async function runPipeline(
       continue;
     }
 
-    // --- Plan ---
+    // --- Plan (written to file) ---
     state.phase = "planning";
     saveState(stateDir, state);
-    log("PLAN", "Running planner...");
+    const planFilePath = resolve(sprintDir, "plan.md");
+    log("PLAN", `Running planner → ${planFilePath}`);
 
-    const plannerOutput = await runPlanner(config, sprint, scoutText, expertiseText);
-    log("PLAN", `Plan: ${plannerOutput.steps.length} steps, ${plannerOutput.filesToCreate.length} files to create`);
+    await runPlanner(config, sprint, planFilePath, prdPath, scoutText, expertiseText);
 
-    // --- Negotiate ---
-    state.phase = "negotiating";
-    saveState(stateDir, state);
-    log("NEGOTIATE", "Negotiating contract...");
-
-    const contract = await negotiateContract(
-      config,
-      sprint.id,
-      sprint.title,
-      plannerOutput,
-      sprint.acceptanceCriteria,
-      config.pipeline.contractRounds
-    );
-    log("NEGOTIATE", `Contract signed. ${(contract.evaluationCriteria ?? []).length} eval criteria, ${(contract.negotiationRounds ?? []).length} rounds.`);
-
-    sprintState.contract = contract;
-    writeJsonFile(resolve(sprintDir, "contract.json"), contract);
-    buildLog.logContract(contract);
+    if (fileExists(planFilePath)) {
+      const planContent = readText(planFilePath);
+      const stepCount = (planContent.match(/^###\s+\d+\./gm) ?? []).length;
+      log("PLAN", `Plan written: ${stepCount} steps, ${planContent.split("\n").length} lines`);
+    } else {
+      log("PLAN", "WARNING: Planner did not write plan file. Using sprint description as fallback.");
+      writeText(planFilePath, `# Sprint Plan: ${sprint.title}\n\n${sprint.description}\n`);
+    }
 
     // --- Build → Evaluate → Retry Loop ---
     let passed = false;
-    let lastEvalResult = undefined;
+    let lastEvalResult: EvalResult | undefined;
+
+    // Capture git state before build for diff
+    let preCommitHash = "";
+    try {
+      preCommitHash = execSync("git rev-parse HEAD", { cwd: config.target.dir, stdio: "pipe" }).toString().trim();
+    } catch { /* no commits yet */ }
 
     for (let attempt = 1; attempt <= config.pipeline.maxRetries; attempt++) {
       state.currentAttempt = attempt;
@@ -184,32 +193,52 @@ export async function runPipeline(
       log("BUILD", `Attempt ${attempt}/${config.pipeline.maxRetries}...`);
       const attemptStart = Date.now();
 
-      // Build — generator runs and writes files directly via tools.
-      // We do NOT parse its output (following adversarial-dev pattern).
-      // The evaluator independently discovers what was built.
-      await runGenerator(
-        config,
-        contract,
-        prdRawText,
-        scoutText,
-        expertiseText,
-        lastEvalResult
-      );
+      // Write feedback file for retries
+      let feedbackFilePath: string | undefined;
+      if (lastEvalResult) {
+        feedbackFilePath = resolve(sprintDir, `feedback-attempt-${attempt - 1}.json`);
+        writeJsonFile(feedbackFilePath, lastEvalResult);
+      }
+
+      // Build — generator reads plan file (and feedback file on retry)
+      await runGenerator(config, planFilePath, feedbackFilePath);
       log("BUILD", "Generator done.");
 
-      // Evaluate — evaluator independently inspects the filesystem
+      // Detect what changed via git diff
+      let filesChanged: string[] = [];
+      try {
+        const diffOutput = execSync("git diff --name-only HEAD", {
+          cwd: config.target.dir, stdio: "pipe",
+        }).toString().trim();
+        const untrackedOutput = execSync("git ls-files --others --exclude-standard", {
+          cwd: config.target.dir, stdio: "pipe",
+        }).toString().trim();
+        filesChanged = [
+          ...diffOutput.split("\n").filter(Boolean),
+          ...untrackedOutput.split("\n").filter(Boolean),
+        ];
+        log("BUILD", `Files changed: ${filesChanged.length}`);
+      } catch {
+        log("BUILD", "Could not detect file changes via git.");
+      }
+
+      // Check if generator actually did anything
+      if (filesChanged.length === 0) {
+        log("BUILD", "WARNING: No files changed. Generator may have failed silently.");
+      }
+
+      // Evaluate — Codex evaluator inspects the filesystem
       state.phase = "evaluating";
       saveState(stateDir, state);
       log("EVAL", "Running evaluator (adversarial)...");
 
-      // Let evaluator discover files on its own (not dependent on generator reporting)
-      const evalResult = await runEvaluator(config, contract, []);
+      const evalResult = await runEvaluator(config, contract(sprint, planFilePath), filesChanged);
 
       const attemptRecord: BuildAttempt = {
         attempt,
         startedAt: new Date(attemptStart).toISOString(),
         completedAt: new Date().toISOString(),
-        filesChanged: [], // Evaluator discovers files independently
+        filesChanged,
         evalResult,
         costUsd: 0,
         durationMs: Date.now() - attemptStart,
@@ -225,11 +254,11 @@ export async function runPipeline(
       buildLog.logBuildAttempt(attempt, evalResult);
 
       if (evalResult.passed) {
-        log("EVAL", `✅ PASSED (score: ${evalResult.overallScore}/10)`);
+        log("EVAL", `PASSED (score: ${evalResult.overallScore}/10)`);
         passed = true;
         break;
       } else {
-        log("EVAL", `❌ FAILED (score: ${evalResult.overallScore}/10)`);
+        log("EVAL", `FAILED (score: ${evalResult.overallScore}/10)`);
         log("EVAL", `Failures: ${(evalResult.failureReasons ?? []).join("; ")}`);
         lastEvalResult = evalResult;
 
@@ -242,25 +271,20 @@ export async function runPipeline(
     // --- Sprint Result ---
     const sprintDuration = Date.now() - sprintStart;
     sprintState.durationMs = sprintDuration;
-
     const finalScore = sprintState.attempts[sprintState.attempts.length - 1]?.evalResult.overallScore ?? 0;
 
     if (passed) {
       sprintState.status = "passed";
 
-      // --- Self-Improve Expertise ---
+      // Self-improve expertise
       if (config.expertise.autoImprove && !options.noImprove) {
         state.phase = "improving";
         saveState(stateDir, state);
         log("IMPROVE", "Running expertise improver...");
 
         try {
-          const update = await runImprover(
-            config,
-            contract,
-            sprintState.attempts,
-            expertiseText
-          );
+          const contractData = contract(sprint, planFilePath);
+          const update = await runImprover(config, contractData, sprintState.attempts, expertiseText);
           if (update.newPatterns.length > 0 || update.newGotchas.length > 0 || update.newDecisions.length > 0) {
             const expertisePath = resolve(config.expertise.dir, `${update.domain}.yaml`);
             const { changesApplied } = applyExpertiseUpdate(expertisePath, update, config.expertise.maxLines);
@@ -275,22 +299,19 @@ export async function runPipeline(
         }
       }
 
-      // --- Git Commit ---
+      // Git commit the sprint
       state.phase = "committing";
       if (config.tracking.gitCommits && !options.noCommit) {
-        log("COMMIT", `Committing: ${contract.title}`);
-        const hash = gitCommit(config.target.dir, contract.title, config.tracking.commitPrefix);
+        log("COMMIT", `Committing: ${sprint.title}`);
+        const hash = gitCommit(config.target.dir, sprint.title, config.tracking.commitPrefix);
         if (hash) {
           sprintState.commitHash = hash;
           log("COMMIT", `Committed: ${hash}`);
           buildLog.logCommit(hash);
-        } else {
-          log("COMMIT", "Nothing to commit or git failed.");
         }
       }
 
       buildLog.logSprintComplete(i + 1, "passed", finalScore, sprintDuration);
-
       sprintResults.push({
         sprintId: sprint.id,
         status: "passed",
@@ -303,9 +324,7 @@ export async function runPipeline(
     } else {
       sprintState.status = "failed";
       log("FAIL", `Sprint failed after ${config.pipeline.maxRetries} attempts.`);
-
       buildLog.logSprintComplete(i + 1, "failed", finalScore, sprintDuration);
-
       sprintResults.push({
         sprintId: sprint.id,
         status: "failed",
@@ -314,8 +333,6 @@ export async function runPipeline(
         costUsd: sprintState.costUsd,
         durationMs: sprintDuration,
       });
-
-      // Stop pipeline on sprint failure
       state.phase = "failed";
       saveState(stateDir, state);
       writeProgress(config, state);
@@ -323,7 +340,6 @@ export async function runPipeline(
       break;
     }
 
-    // Update tracking files after each sprint
     saveState(stateDir, state);
     writeProgress(config, state);
     buildLog.flush();
@@ -355,6 +371,29 @@ export async function runPipeline(
 }
 
 // --- Helpers ---
+
+/**
+ * Build a minimal SprintContract for the evaluator and improver.
+ * The contract references the plan file for full details.
+ */
+function contract(sprint: SprintPlan, planFilePath: string): SprintContract {
+  return {
+    sprintId: sprint.id,
+    title: sprint.title,
+    acceptanceCriteria: sprint.acceptanceCriteria,
+    implementation: {
+      steps: [],
+      filesToCreate: sprint.fileTargets,
+      filesToModify: [],
+      validationCommands: sprint.acceptanceCriteria
+        .filter((ac) => ac.validationCommand)
+        .map((ac) => ac.validationCommand!),
+    },
+    evaluationCriteria: [],
+    negotiationRounds: [],
+    signedAt: new Date().toISOString(),
+  };
+}
 
 function saveState(stateDir: string, state: PipelineState): void {
   state.updatedAt = new Date().toISOString();
