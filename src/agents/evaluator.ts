@@ -79,18 +79,42 @@ export async function runEvaluator(
     workingDir: config.target.dir,
   });
 
-  const evalResult = extractJson<EvalResult>(
+  const raw = extractJson<EvalResult>(
     result.output,
     ["passed", "overallScore", "scores"],
     buildDefaultEvalResult(contract)
   );
 
-  // Enforce pass threshold
-  const threshold = config.pipeline.evalPassThreshold;
-  evalResult.passed = evalResult.overallScore >= threshold &&
-    evalResult.scores.every((s) => s.score >= threshold);
+  // Defensive coercion — LLM outputs are unreliable
+  const rawAny = raw as unknown as Record<string, unknown>;
+  const rawScores = Array.isArray(raw.scores) ? raw.scores : [];
+  const scores = rawScores.map((s) => {
+    const sa = s as unknown as Record<string, unknown>;
+    return {
+      criterionId: String(sa.criterionId ?? sa.criterion_id ?? "unknown"),
+      criterion: String(sa.criterion ?? ""),
+      score: typeof sa.score === "number" ? sa.score : 0,
+      reasoning: String(sa.reasoning ?? ""),
+      specificFailures: Array.isArray(sa.specificFailures) ? sa.specificFailures as string[] : Array.isArray(sa.specific_failures) ? sa.specific_failures as string[] : [],
+    };
+  });
 
-  return evalResult;
+  const overallScore = typeof raw.overallScore === "number" ? raw.overallScore
+    : typeof rawAny.overall_score === "number" ? rawAny.overall_score as number
+    : scores.length > 0 ? scores.reduce((sum, s) => sum + s.score, 0) / scores.length : 0;
+
+  const threshold = config.pipeline.evalPassThreshold;
+  const passed = overallScore >= threshold && (scores.length === 0 || scores.every((s) => s.score >= threshold));
+
+  return {
+    passed,
+    overallScore,
+    scores,
+    feedback: typeof raw.feedback === "string" ? raw.feedback : result.output.slice(0, 1000),
+    failureReasons: Array.isArray(raw.failureReasons) ? raw.failureReasons
+      : Array.isArray(rawAny.failure_reasons) ? rawAny.failure_reasons as string[]
+      : passed ? [] : ["Evaluation did not produce structured failure reasons"],
+  };
 }
 
 function buildDefaultEvalResult(contract: SprintContract): EvalResult {

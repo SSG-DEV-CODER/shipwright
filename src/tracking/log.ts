@@ -82,7 +82,7 @@ export class BuildLog {
       `- **Passed**: ${evalResult.passed}`,
     );
 
-    for (const score of evalResult.scores) {
+    for (const score of (Array.isArray(evalResult.scores) ? evalResult.scores : [])) {
       const icon = score.score >= 7 ? "✅" : "❌";
       this.entries.push(`- ${icon} [${score.criterionId}] ${score.criterion}: ${score.score}/10`);
       if (score.specificFailures.length > 0) {

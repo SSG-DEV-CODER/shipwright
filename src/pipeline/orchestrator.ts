@@ -227,7 +227,7 @@ export async function runPipeline(
         break;
       } else {
         log("EVAL", `❌ FAILED (score: ${evalResult.overallScore}/10)`);
-        log("EVAL", `Failures: ${evalResult.failureReasons.join("; ")}`);
+        log("EVAL", `Failures: ${(evalResult.failureReasons ?? []).join("; ")}`);
         lastEvalResult = evalResult;
 
         if (attempt < config.pipeline.maxRetries) {
