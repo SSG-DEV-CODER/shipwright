@@ -91,30 +91,41 @@ export async function runAgent(options: AgentOptions): Promise<AgentResult> {
       },
     });
 
+    let lastAssistantText = "";
+    let resultText = "";
+
     for await (const event of stream) {
-      // Capture text from assistant messages
+      // Capture text from assistant messages (accumulate the LAST one — it has the JSON)
       if (event.type === "assistant" && Array.isArray(event.message?.content)) {
-        for (const block of event.message.content) {
-          if (block.type === "text") {
-            fullOutput += block.text;
-          }
+        const textBlocks = event.message.content
+          .filter((b: { type: string }) => b.type === "text")
+          .map((b: { text: string }) => b.text)
+          .join("");
+        if (textBlocks) {
+          lastAssistantText = textBlocks; // Keep overwriting — we want the LAST one
+          fullOutput += textBlocks;
         }
       }
-      // Capture result — prefer result.text if we have no accumulated output
+      // Capture final result text — this is the authoritative output
       if (event.type === "result") {
         if (event.usage) {
           inputTokens += event.usage.input_tokens ?? 0;
           outputTokens += event.usage.output_tokens ?? 0;
         }
-        if (event.text && !fullOutput.trim()) {
-          fullOutput = event.text;
+        if (event.text) {
+          resultText = event.text;
         }
       }
-      // Handle other text events (some SDK versions emit these)
-      if (event.type === "text" && typeof event.text === "string") {
-        fullOutput += event.text;
-      }
     }
+
+    // Prefer result.text (final output), then last assistant text, then full accumulated
+    if (resultText) {
+      fullOutput = resultText;
+    } else if (lastAssistantText && lastAssistantText.includes("{")) {
+      // Last assistant message likely has the JSON — use it as primary output
+      fullOutput = lastAssistantText;
+    }
+    // else: keep the full accumulated output
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error(`[${options.role}] Agent error: ${errMsg}`);
