@@ -1,0 +1,51 @@
+# Shipwright Build System Configuration
+# Copy to your project root and customize
+
+# Target project
+target:
+  dir: "."
+  language: "typescript"
+  runtime: "bun"
+  typecheck_cmd: "bunx tsc --noEmit"
+  test_cmd: "bun test"
+  lint_cmd: "bunx tsc --noEmit"
+
+# Agent models (per-role)
+models:
+  scout: "claude-sonnet-4-20250514"
+  planner: "claude-opus-4-20250514"
+  generator: "claude-opus-4-20250514"
+  evaluator: "codex"
+  negotiator: "claude-opus-4-20250514"
+  improver: "claude-sonnet-4-20250514"
+
+# Pipeline settings
+pipeline:
+  max_retries: 3
+  max_scouts: 5
+  contract_rounds: 2
+  eval_pass_threshold: 7.0
+
+# Expertise
+expertise:
+  dir: "./expertise"
+  auto_improve: true
+  max_lines: 1000
+
+# Reference codebases (read-only, for scout context)
+references: []
+  # - path: "../other-repo"
+  #   label: "Reference Codebase"
+
+# Tracking
+tracking:
+  progress_file: "PROGRESS.md"
+  log_file: "LOG.md"
+  git_commits: true
+  commit_prefix: "shipwright:"
+
+# Cost limits (USD)
+limits:
+  max_cost_per_sprint: 5.00
+  max_cost_per_build: 25.00
+  max_tokens_per_agent_call: 200000

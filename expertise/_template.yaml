@@ -1,0 +1,44 @@
+# Expertise Template
+# Copy this file and rename to <domain>.yaml
+# Then run: shipwright expertise improve <domain>
+
+overview:
+  description: "Brief description of this domain"
+  scope:
+    - "What this expertise covers"
+  key_files:
+    - "path/to/important/file.ts"
+
+core_implementation:
+  main_module:
+    description: "Primary module description"
+    files:
+      - "path/to/file.ts"
+    key_functions:
+      - "functionName() — what it does"
+    notes:
+      - "Important implementation detail"
+
+patterns:
+  - name: "Pattern name"
+    description: "How this pattern works"
+    example: "Brief code example or reference"
+    added_date: "2026-01-01"
+
+gotchas:
+  - description: "Something that will trip you up"
+    impact: "high"
+    mitigation: "How to avoid or fix it"
+    added_date: "2026-01-01"
+
+decisions: []
+
+anti_patterns:
+  - "Thing to avoid and why"
+
+metadata:
+  created: "2026-01-01"
+  last_validated: "2026-01-01"
+  source_sprints: []
+  stability: "evolving"
+  consecutive_no_change: 0

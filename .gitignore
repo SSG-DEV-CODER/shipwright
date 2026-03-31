@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Runtime state (ephemeral, not committed)
+.shipwright/
+workspace/
+
+# Generated specs (rebuilt on each run)
+specs/
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Bun
+bun.lockb

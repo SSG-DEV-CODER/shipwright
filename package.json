@@ -1,0 +1,28 @@
+{
+  "name": "shipwright",
+  "version": "0.1.0",
+  "description": "Adversarial build system with expert learning — takes PRDs, builds software through adversarial agent pipeline with persistent expertise",
+  "type": "module",
+  "main": "src/index.ts",
+  "bin": {
+    "shipwright": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "build": "bun run src/index.ts build",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "lint": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
