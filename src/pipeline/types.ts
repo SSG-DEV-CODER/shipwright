@@ -81,7 +81,7 @@ export interface EvaluationCriterion {
 
 export interface NegotiationRound {
   round: number;
-  proposerRole: "planner" | "evaluator";
+  proposerRole: "planner" | "evaluator" | "negotiator";
   proposedChanges: string;
   outcome: "accepted" | "counter" | "rejected";
   reasoning: string;

@@ -123,7 +123,7 @@ bunx tsc --noEmit           # Type check
 | Sprint | Description | Status |
 |--------|-------------|--------|
 | 1 | Skeleton + CLI + Config + Types | COMPLETE |
-| 2 | Intake + Base Agent + Scout | PENDING |
-| 3 | Pipeline Core (Plan → Build → Evaluate) | PENDING |
-| 4 | Contract Negotiation + Tracking | PENDING |
-| 5 | Expertise System + Self-Improve | PENDING |
+| 2 | Intake + Base Agent + Scout | COMPLETE |
+| 3 | Pipeline Core (Plan → Build → Evaluate) | COMPLETE |
+| 4 | Contract Negotiation + Tracking | COMPLETE |
+| 5 | Expertise System + Self-Improve | COMPLETE |

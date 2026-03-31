@@ -12,6 +12,12 @@ import { runScouts, formatScoutReports } from "../agents/scout.js";
 import { runPlanner } from "../agents/planner.js";
 import { runGenerator } from "../agents/generator.js";
 import { runEvaluator } from "../agents/evaluator.js";
+import { negotiateContract } from "../agents/negotiator.js";
+import { runImprover } from "../agents/improver.js";
+import { applyExpertiseUpdate } from "../expertise/updater.js";
+import { writeProgress } from "../tracking/progress.js";
+import { BuildLog } from "../tracking/log.js";
+import { gitCommit } from "../tracking/git.js";
 import { writeJsonFile, ensureDir } from "../lib/fs.js";
 import { CostLedger } from "../lib/cost.js";
 import type { ShipwrightConfig } from "../config.js";
@@ -40,6 +46,7 @@ export async function runPipeline(
   const costLedger = new CostLedger();
   const stateDir = resolve(config.target.dir, ".shipwright");
   ensureDir(stateDir);
+  const buildLog = new BuildLog(config, prdPath);
 
   // --- Phase: PARSING ---
   log("PARSE", `Reading PRD: ${prdPath}`);
@@ -99,6 +106,8 @@ export async function runPipeline(
     const sprintStart = Date.now();
     sprintState.status = "in_progress";
 
+    buildLog.logSprintStart(i + 1, sprint.title);
+
     // --- Scout ---
     state.phase = "scouting";
     saveState(stateDir, state);
@@ -117,6 +126,9 @@ export async function runPipeline(
     const sprintDir = resolve(stateDir, `sprint-${String(i + 1).padStart(3, "0")}`);
     ensureDir(sprintDir);
     writeJsonFile(resolve(sprintDir, "scout-reports.json"), scoutReports);
+    if (scoutReports.length > 0) {
+      buildLog.logScoutReports(scoutReports);
+    }
 
     if (options.dryRun) {
       log("DRY-RUN", "Dry run mode — skipping build and evaluation.");
@@ -139,35 +151,24 @@ export async function runPipeline(
     const plannerOutput = await runPlanner(config, sprint, scoutText, expertiseText);
     log("PLAN", `Plan: ${plannerOutput.steps.length} steps, ${plannerOutput.filesToCreate.length} files to create`);
 
-    // Build contract from planner output + acceptance criteria
-    const contract: SprintContract = {
-      sprintId: sprint.id,
-      title: sprint.title,
-      acceptanceCriteria: sprint.acceptanceCriteria,
-      implementation: {
-        steps: plannerOutput.steps.map((s) => ({
-          order: s.order,
-          description: s.description,
-          targetFiles: s.targetFiles,
-        })),
-        filesToCreate: plannerOutput.filesToCreate,
-        filesToModify: plannerOutput.filesToModify,
-        validationCommands: plannerOutput.validationCommands.length > 0
-          ? plannerOutput.validationCommands
-          : [config.target.typecheckCmd],
-      },
-      evaluationCriteria: plannerOutput.evaluationCriteria.map((ec, idx) => ({
-        id: `eval-${String(idx + 1).padStart(3, "0")}`,
-        criterion: ec.criterion,
-        weight: 1 / (plannerOutput.evaluationCriteria.length || 1),
-        specificChecks: ec.specificChecks,
-      })),
-      negotiationRounds: [],
-      signedAt: new Date().toISOString(),
-    };
+    // --- Negotiate ---
+    state.phase = "negotiating";
+    saveState(stateDir, state);
+    log("NEGOTIATE", "Negotiating contract...");
+
+    const contract = await negotiateContract(
+      config,
+      sprint.id,
+      sprint.title,
+      plannerOutput,
+      sprint.acceptanceCriteria,
+      config.pipeline.contractRounds
+    );
+    log("NEGOTIATE", `Contract signed. ${contract.evaluationCriteria.length} eval criteria, ${contract.negotiationRounds.length} rounds.`);
 
     sprintState.contract = contract;
     writeJsonFile(resolve(sprintDir, "contract.json"), contract);
+    buildLog.logContract(contract);
 
     // --- Build → Evaluate → Retry Loop ---
     let passed = false;
@@ -216,6 +217,9 @@ export async function runPipeline(
       writeJsonFile(resolve(attemptDir, "generator-output.json"), genOutput);
       writeJsonFile(resolve(attemptDir, "eval-result.json"), evalResult);
 
+      // Log the attempt
+      buildLog.logBuildAttempt(attempt, evalResult);
+
       if (evalResult.passed) {
         log("EVAL", `✅ PASSED (score: ${evalResult.overallScore}/10)`);
         passed = true;
@@ -235,32 +239,60 @@ export async function runPipeline(
     const sprintDuration = Date.now() - sprintStart;
     sprintState.durationMs = sprintDuration;
 
+    const finalScore = sprintState.attempts[sprintState.attempts.length - 1]?.evalResult.overallScore ?? 0;
+
     if (passed) {
       sprintState.status = "passed";
-      state.phase = "committing";
 
-      // Git commit (if enabled)
-      if (config.tracking.gitCommits && !options.noCommit) {
-        log("COMMIT", `Committing sprint: ${contract.title}`);
+      // --- Self-Improve Expertise ---
+      if (config.expertise.autoImprove && !options.noImprove) {
+        state.phase = "improving";
+        saveState(stateDir, state);
+        log("IMPROVE", "Running expertise improver...");
+
         try {
-          const { execSync } = await import("child_process");
-          execSync(`git add -A`, { cwd: config.target.dir, stdio: "pipe" });
-          execSync(
-            `git commit -m "${config.tracking.commitPrefix} ${contract.title}"`,
-            { cwd: config.target.dir, stdio: "pipe" }
+          const update = await runImprover(
+            config,
+            contract,
+            sprintState.attempts,
+            expertiseText
           );
-          log("COMMIT", "Committed successfully.");
-        } catch {
-          log("COMMIT", "Git commit failed (non-fatal).");
+          if (update.newPatterns.length > 0 || update.newGotchas.length > 0 || update.newDecisions.length > 0) {
+            const expertisePath = resolve(config.expertise.dir, `${update.domain}.yaml`);
+            const { changesApplied } = applyExpertiseUpdate(expertisePath, update, config.expertise.maxLines);
+            log("IMPROVE", `Updated ${update.domain}: ${changesApplied.length} changes`);
+            buildLog.logExpertiseUpdate(update.domain, changesApplied);
+            sprintState.expertiseUpdated = true;
+          } else {
+            log("IMPROVE", "No new learnings to record.");
+          }
+        } catch (err) {
+          log("IMPROVE", `Expertise update failed (non-fatal): ${err}`);
         }
       }
+
+      // --- Git Commit ---
+      state.phase = "committing";
+      if (config.tracking.gitCommits && !options.noCommit) {
+        log("COMMIT", `Committing: ${contract.title}`);
+        const hash = gitCommit(config.target.dir, contract.title, config.tracking.commitPrefix);
+        if (hash) {
+          sprintState.commitHash = hash;
+          log("COMMIT", `Committed: ${hash}`);
+          buildLog.logCommit(hash);
+        } else {
+          log("COMMIT", "Nothing to commit or git failed.");
+        }
+      }
+
+      buildLog.logSprintComplete(i + 1, "passed", finalScore, sprintDuration);
 
       sprintResults.push({
         sprintId: sprint.id,
         status: "passed",
         attempts: sprintState.attempts.length,
-        finalScore: sprintState.attempts[sprintState.attempts.length - 1]?.evalResult.overallScore ?? 0,
-        commitHash: undefined, // TODO: capture from git
+        finalScore,
+        commitHash: sprintState.commitHash,
         costUsd: sprintState.costUsd,
         durationMs: sprintDuration,
       });
@@ -268,11 +300,13 @@ export async function runPipeline(
       sprintState.status = "failed";
       log("FAIL", `Sprint failed after ${config.pipeline.maxRetries} attempts.`);
 
+      buildLog.logSprintComplete(i + 1, "failed", finalScore, sprintDuration);
+
       sprintResults.push({
         sprintId: sprint.id,
         status: "failed",
         attempts: sprintState.attempts.length,
-        finalScore: sprintState.attempts[sprintState.attempts.length - 1]?.evalResult.overallScore ?? 0,
+        finalScore,
         costUsd: sprintState.costUsd,
         durationMs: sprintDuration,
       });
@@ -280,10 +314,15 @@ export async function runPipeline(
       // Stop pipeline on sprint failure
       state.phase = "failed";
       saveState(stateDir, state);
+      writeProgress(config, state);
+      buildLog.flush();
       break;
     }
 
+    // Update tracking files after each sprint
     saveState(stateDir, state);
+    writeProgress(config, state);
+    buildLog.flush();
   }
 
   // --- Final Result ---
@@ -293,6 +332,9 @@ export async function runPipeline(
   state.phase = allPassed ? "complete" : "failed";
   state.totalCostUsd = costLedger.totalCostUsd;
   saveState(stateDir, state);
+  writeProgress(config, state);
+  buildLog.logPipelineComplete(allPassed ? "complete" : "failed", totalDuration, costLedger.totalCostUsd);
+  buildLog.flush();
 
   const result: PipelineResult = {
     prdPath,

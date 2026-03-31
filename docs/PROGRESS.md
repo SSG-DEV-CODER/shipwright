@@ -10,10 +10,10 @@
 | Sprint | Description | Status | Date |
 |--------|-------------|--------|------|
 | 1 | Skeleton + CLI + Config + Types + Prompts | **COMPLETE** | 2026-03-31 |
-| 2 | Intake (PRD parser) + Base Agent + Scout | PENDING | — |
-| 3 | Pipeline Core (Plan → Build → Evaluate + Retry) | PENDING | — |
-| 4 | Contract Negotiation + Tracking | PENDING | — |
-| 5 | Expertise System + Self-Improve + Resume | PENDING | — |
+| 2 | Intake (PRD parser) + Base Agent + Scout | **COMPLETE** | 2026-03-31 |
+| 3 | Pipeline Core (Plan → Build → Evaluate + Retry) | **COMPLETE** | 2026-03-31 |
+| 4 | Contract Negotiation + Tracking | **COMPLETE** | 2026-03-31 |
+| 5 | Expertise System + Self-Improve + Resume | **COMPLETE** | 2026-03-31 |
 
 ---
 
@@ -46,6 +46,37 @@
 
 ---
 
-## Next Up: Sprint 2
+## Sprint 2: Intake + Base Agent + Scout — COMPLETE
 
-PRD parser, base agent SDK integration, and scout agents for codebase exploration.
+- PRD parser: markdown → structured PRD with sections, criteria, deliverables
+- Sprint planner: derives sprints from explicit steps, phases, or criteria
+- Expertise loader: reads YAML files, formats for agent prompts
+- Scout agent: parallel codebase exploration
+- 10/10 tests passing
+
+## Sprint 3: Pipeline Core — COMPLETE
+
+- Planner, Generator, Evaluator agents wired
+- Pipeline orchestrator: full sprint loop with retry
+- State checkpointing to .shipwright/state.json
+- CLI `build` command runs full pipeline
+
+## Sprint 4: Contract Negotiation + Tracking — COMPLETE
+
+- Negotiator agent: mediates planner ↔ evaluator contracts
+- PROGRESS.md auto-writer with per-sprint status
+- LOG.md auto-writer with timestamped entries
+- Git commit helper with shipwright: prefix
+
+## Sprint 5: Expertise System + Self-Improve — COMPLETE
+
+- Expertise updater: merges learnings into YAML files
+- Improver agent: extracts patterns/gotchas/decisions from builds
+- Expertise validator: checks claims against filesystem
+- Negotiator wired into pipeline (replaces inline contract)
+- Improver wired into pipeline (auto-updates after success)
+- Full tracking integration (progress + log + git)
+
+## All Sprints Complete
+
+Shipwright v0.1.0 is feature-complete. Ready for first real test: running against PRD-platform-restructure-phase-1.md with choff-platform as reference.
