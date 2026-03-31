@@ -179,15 +179,11 @@ export async function runPipeline(
       writeText(planFilePath, `# Sprint Plan: ${sprint.title}\n\n${sprint.description}\n`);
     }
 
-    // --- Build → Evaluate → Retry Loop ---
+    // --- Build → Evaluate → Smart Retry Loop ---
     let passed = false;
     let lastEvalResult: EvalResult | undefined;
-
-    // Capture git state before build for diff
-    let preCommitHash = "";
-    try {
-      preCommitHash = execSync("git rev-parse HEAD", { cwd: config.target.dir, stdio: "pipe" }).toString().trim();
-    } catch { /* no commits yet */ }
+    let previousScore = 0;
+    let planAmended = false;
 
     for (let attempt = 1; attempt <= config.pipeline.maxRetries; attempt++) {
       state.currentAttempt = attempt;
@@ -197,12 +193,82 @@ export async function runPipeline(
       log("BUILD", `Attempt ${attempt}/${config.pipeline.maxRetries}...`);
       const attemptStart = Date.now();
 
-      // Write feedback file for retries
+      // --- Smart feedback routing based on failure categories ---
       let feedbackFilePath: string | undefined;
       if (lastEvalResult) {
         feedbackFilePath = resolve(sprintDir, `feedback-attempt-${attempt - 1}.json`);
         writeJsonFile(feedbackFilePath, lastEvalResult);
+
+        const categories = categoriseFailures(lastEvalResult);
+
+        // TREND DETECTION: if score didn't improve, escalate
+        if (attempt > 2 && lastEvalResult.overallScore <= previousScore) {
+          log("TREND", `Score not improving (${previousScore} → ${lastEvalResult.overallScore}). Escalating.`);
+          // Force plan amendment if not already done
+          if (!planAmended) {
+            categories.hasPlan = true;
+          }
+        }
+
+        // PLAN failures → amend the plan before generator retries
+        if (categories.hasPlan && !planAmended) {
+          log("ROUTE", "PLAN failures detected → amending plan before retry...");
+          state.phase = "planning";
+          saveState(stateDir, state);
+
+          const planFailures = (lastEvalResult.failureCategories ?? [])
+            .filter((f) => f.category === "plan")
+            .map((f) => f.description)
+            .join("\n");
+
+          const failedCriteria = lastEvalResult.scores
+            .filter((s) => s.score < 7 && s.failureCategory === "plan")
+            .map((s) => `- [${s.criterionId}] ${s.criterion}: ${s.reasoning}`)
+            .join("\n");
+
+          // Re-run planner with failure context
+          const amendPrompt = [
+            `The previous plan was incomplete. The evaluator found PLAN-level gaps.`,
+            ``,
+            `## Plan Failures`,
+            planFailures || failedCriteria || lastEvalResult.feedback,
+            ``,
+            `Amend the plan at: ${planFilePath}`,
+            `Add missing steps for the failures above. Keep existing steps that worked.`,
+          ].join("\n");
+
+          await runPlanner(config, sprint, planFilePath, prdPath, amendPrompt, expertiseText);
+          log("ROUTE", "Plan amended.");
+          planAmended = true;
+        }
+
+        // INFRA failures → prepend setup instructions to the feedback
+        if (categories.hasInfra) {
+          log("ROUTE", "INFRA failures detected → adding setup instructions to feedback...");
+          const infraNote = [
+            `\n## INFRASTRUCTURE SETUP REQUIRED\n`,
+            `The evaluator found that the project environment is not set up.`,
+            `BEFORE fixing any code issues, you MUST:`,
+            `1. Create a .env file with required environment variables (DATABASE_URL, PAYLOAD_SECRET, etc.)`,
+            `2. Run \`pnpm install\` to install all dependencies`,
+            `3. Verify the dev server starts with \`pnpm dev\``,
+            `4. If a database is needed, set up the connection and run migrations`,
+            `\nDo this FIRST, then address the code issues.\n`,
+          ].join("\n");
+
+          // Append infra note to the feedback file
+          const existingFeedback = lastEvalResult;
+          existingFeedback.feedback = infraNote + "\n" + existingFeedback.feedback;
+          writeJsonFile(feedbackFilePath, existingFeedback);
+        }
+
+        // CODE failures → standard retry (feedback already written)
+        if (categories.hasCode && !categories.hasPlan && !categories.hasInfra) {
+          log("ROUTE", "CODE failures only → standard generator retry with feedback.");
+        }
       }
+
+      previousScore = lastEvalResult?.overallScore ?? 0;
 
       // Build — generator reads plan file (and feedback file on retry)
       await runGenerator(config, planFilePath, feedbackFilePath);
@@ -226,12 +292,11 @@ export async function runPipeline(
         log("BUILD", "Could not detect file changes via git.");
       }
 
-      // Check if generator actually did anything
       if (filesChanged.length === 0) {
-        log("BUILD", "WARNING: No files changed. Generator may have failed silently.");
+        log("BUILD", "WARNING: No files changed. Generator may have committed already.");
       }
 
-      // Evaluate — Codex evaluator inspects the filesystem
+      // Evaluate
       state.phase = "evaluating";
       saveState(stateDir, state);
       log("EVAL", "Running evaluator (adversarial)...");
@@ -264,10 +329,26 @@ export async function runPipeline(
       } else {
         log("EVAL", `FAILED (score: ${evalResult.overallScore}/10)`);
         log("EVAL", `Failures: ${(evalResult.failureReasons ?? []).join("; ")}`);
+
+        // Log failure categories
+        const cats = categoriseFailures(evalResult);
+        const catSummary = [
+          cats.hasCode ? "CODE" : null,
+          cats.hasPlan ? "PLAN" : null,
+          cats.hasInfra ? "INFRA" : null,
+        ].filter(Boolean).join(" + ");
+        log("EVAL", `Failure types: ${catSummary || "uncategorised"}`);
+
         lastEvalResult = evalResult;
 
+        // TREND DETECTION: stop early if score dropped and we've tried twice
+        if (attempt >= 2 && evalResult.overallScore < previousScore) {
+          log("TREND", `Score DROPPED (${previousScore} → ${evalResult.overallScore}). Stopping early — more retries unlikely to help.`);
+          break;
+        }
+
         if (attempt < config.pipeline.maxRetries) {
-          log("RETRY", `Retrying with feedback...`);
+          log("RETRY", `Retrying with smart routing...`);
         }
       }
     }
@@ -407,4 +488,59 @@ function saveState(stateDir: string, state: PipelineState): void {
 function log(phase: string, message: string): void {
   const timestamp = new Date().toISOString().split("T")[1].replace("Z", "");
   console.log(`[${timestamp}] [${phase.padEnd(8)}] ${message}`);
+}
+
+/**
+ * Categorise eval failures into CODE, PLAN, INFRA.
+ * Uses explicit categories from evaluator output, with heuristic fallback.
+ */
+function categoriseFailures(evalResult: EvalResult): {
+  hasCode: boolean;
+  hasPlan: boolean;
+  hasInfra: boolean;
+} {
+  let hasCode = false;
+  let hasPlan = false;
+  let hasInfra = false;
+
+  // Strategy 1: Use explicit categories from evaluator (Codex schema or structured markdown)
+  if (evalResult.failureCategories && evalResult.failureCategories.length > 0) {
+    for (const cat of evalResult.failureCategories) {
+      if (cat.category === "code") hasCode = true;
+      if (cat.category === "plan") hasPlan = true;
+      if (cat.category === "infra") hasInfra = true;
+    }
+    return { hasCode, hasPlan, hasInfra };
+  }
+
+  // Strategy 2: Use per-score categories
+  for (const score of evalResult.scores ?? []) {
+    if (score.score >= 7) continue;
+    if (score.failureCategory === "code") hasCode = true;
+    else if (score.failureCategory === "plan") hasPlan = true;
+    else if (score.failureCategory === "infra") hasInfra = true;
+  }
+  if (hasCode || hasPlan || hasInfra) return { hasCode, hasPlan, hasInfra };
+
+  // Strategy 3: Heuristic — scan feedback text for keywords
+  const text = (evalResult.feedback + " " + evalResult.failureReasons.join(" ")).toLowerCase();
+
+  const infraKeywords = [".env", "database", "connection", "environment", "dependencies not installed",
+    "pnpm install", "npm install", "no such file", "econnrefused", "500", "server error",
+    "database_url", "missing env", "not configured", "not running"];
+  const planKeywords = ["missing from plan", "not in plan", "should have been created",
+    "no api route", "directory does not exist", "file not found", "missing step",
+    "incomplete", "not implemented", "was not created"];
+
+  for (const kw of infraKeywords) {
+    if (text.includes(kw)) { hasInfra = true; break; }
+  }
+  for (const kw of planKeywords) {
+    if (text.includes(kw)) { hasPlan = true; break; }
+  }
+
+  // Default: if nothing matched, assume code issue
+  if (!hasInfra && !hasPlan) hasCode = true;
+
+  return { hasCode, hasPlan, hasInfra };
 }

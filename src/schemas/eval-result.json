@@ -1,9 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "EvalResult",
-  "description": "Adversarial evaluation result",
+  "description": "Adversarial evaluation result with failure categorisation",
   "type": "object",
-  "required": ["passed", "overallScore", "scores", "feedback", "failureReasons"],
+  "required": ["passed", "overallScore", "scores", "feedback", "failureReasons", "failureCategories"],
   "additionalProperties": false,
   "properties": {
     "passed": {
@@ -19,7 +19,7 @@
       "description": "One entry per acceptance criterion",
       "items": {
         "type": "object",
-        "required": ["criterionId", "criterion", "score", "reasoning", "specificFailures"],
+        "required": ["criterionId", "criterion", "score", "reasoning", "specificFailures", "failureCategory"],
         "additionalProperties": false,
         "properties": {
           "criterionId": {
@@ -42,18 +42,48 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "Specific failures found"
+          },
+          "failureCategory": {
+            "type": "string",
+            "enum": ["code", "plan", "infra", "pass"],
+            "description": "code=generator can fix, plan=planner needs to amend, infra=environment setup needed, pass=no failure"
           }
         }
       }
     },
     "feedback": {
       "type": "string",
-      "description": "Detailed feedback for the Generator"
+      "description": "Detailed feedback for fixing the issues"
     },
     "failureReasons": {
       "type": "array",
       "items": { "type": "string" },
       "description": "Top-level failure reasons"
+    },
+    "failureCategories": {
+      "type": "array",
+      "description": "Categorised failures for smart routing",
+      "items": {
+        "type": "object",
+        "required": ["category", "description", "criterionIds"],
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["code", "plan", "infra"],
+            "description": "code=generator fix, plan=planner amend, infra=environment setup"
+          },
+          "description": {
+            "type": "string",
+            "description": "What the failure is"
+          },
+          "criterionIds": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Which criteria are affected"
+          }
+        }
+      }
     }
   }
 }

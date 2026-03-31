@@ -89,6 +89,14 @@ export interface NegotiationRound {
 
 // --- Evaluation ---
 
+/**
+ * Failure categories — determines who handles the fix:
+ * - CODE: TypeScript errors, logic bugs, missing imports → Generator retries
+ * - PLAN: Missing steps, wrong structure, incomplete scope → Planner amends plan
+ * - INFRA: No database, missing env vars, deps not installed → Generator gets setup instructions
+ */
+export type FailureCategory = "code" | "plan" | "infra";
+
 export interface BuildAttempt {
   attempt: number;
   startedAt: string;
@@ -105,6 +113,7 @@ export interface EvalResult {
   scores: EvalScore[];
   feedback: string; // detailed feedback for generator on failure
   failureReasons: string[]; // specific criteria that failed
+  failureCategories?: CategorisedFailure[]; // categorised failures for smart routing
 }
 
 export interface EvalScore {
@@ -113,6 +122,13 @@ export interface EvalScore {
   score: number; // 0-10
   reasoning: string;
   specificFailures: string[];
+  failureCategory?: FailureCategory; // what type of failure this is
+}
+
+export interface CategorisedFailure {
+  category: FailureCategory;
+  description: string;
+  criterionIds: string[]; // which criteria are affected
 }
 
 // --- Scout Reports ---

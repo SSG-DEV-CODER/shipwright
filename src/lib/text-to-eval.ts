@@ -128,12 +128,16 @@ function parseStructuredMarkdown(
     const scoreStr = getValue("score");
     const scoreNum = extractScoreFromText(scoreStr) || extractScoreFromText(block.slice(0, 200));
 
+    const category = getValue("category").toLowerCase();
+    const failureCategory = (["code", "plan", "infra"].includes(category) ? category : scoreNum >= 7 ? "pass" : "code") as "code" | "plan" | "infra" | "pass";
+
     scores.push({
       criterionId: id,
       criterion: getValue("criterion") || (criteria.find((c) => c.id === id)?.text ?? id),
       score: scoreNum,
       reasoning: getValue("reasoning"),
       specificFailures: getValues("failures"),
+      failureCategory: failureCategory === "pass" ? undefined : failureCategory,
     });
   }
 
@@ -168,12 +172,37 @@ function parseStructuredMarkdown(
     ? failureMatch[1].split("\n").map((l) => l.replace(/^[-*]\s*/, "").trim()).filter((l) => l.length > 5)
     : scores.filter((s) => s.score < threshold).map((s) => `[${s.criterionId}] ${s.reasoning}`);
 
+  // Build categorised failures from scores
+  const failureCategories: Array<{ category: "code" | "plan" | "infra"; description: string; criterionIds: string[] }> = [];
+  const categoryMap = new Map<string, { description: string[]; criterionIds: string[] }>();
+
+  for (const s of scores) {
+    if (s.failureCategory && s.score < threshold) {
+      const cat = s.failureCategory;
+      if (!categoryMap.has(cat)) {
+        categoryMap.set(cat, { description: [], criterionIds: [] });
+      }
+      const entry = categoryMap.get(cat)!;
+      entry.criterionIds.push(s.criterionId);
+      entry.description.push(s.reasoning);
+    }
+  }
+
+  for (const [category, data] of categoryMap) {
+    failureCategories.push({
+      category: category as "code" | "plan" | "infra",
+      description: data.description.join("; "),
+      criterionIds: data.criterionIds,
+    });
+  }
+
   return {
     passed,
     overallScore,
     scores,
     feedback: feedback || text.slice(-2000),
     failureReasons: passed ? [] : failureReasons,
+    failureCategories,
   };
 }
 
