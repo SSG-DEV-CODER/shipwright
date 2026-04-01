@@ -1,9 +1,9 @@
 /**
  * PRD Validator Agent — checks PRD against vendor documentation before building.
  *
- * Uses Context7 MCP + agent-browser MCP to fetch real vendor docs and compare
- * against the PRD's instructions. Flags contradictions, impossibilities, and
- * ambiguities BEFORE any tokens are spent on building.
+ * Reads local vendor docs (if available) and compares against the PRD's
+ * instructions. Flags contradictions, impossibilities, and ambiguities
+ * BEFORE any tokens are spent on building.
  */
 
 import { readFileSync } from "fs";
@@ -40,6 +40,7 @@ export interface ValidationResult {
 export async function runValidator(
   config: ShipwrightConfig,
   prdPath: string,
+  vendorDocsDir?: string,
 ): Promise<ValidationResult> {
   const systemPrompt = readFileSync(
     resolve(import.meta.dir, "../prompts/validator.md"),
@@ -61,7 +62,12 @@ export async function runValidator(
     ``,
     `1. Read the full PRD above carefully.`,
     `2. Identify every technology, library, framework, and tool mentioned.`,
-    `3. For EACH technology, use Context7 MCP to fetch the official documentation.`,
+    vendorDocsDir
+      ? `3. For EACH technology, read the local vendor documentation at: ${vendorDocsDir}/`
+      : `3. For EACH technology, check for local vendor documentation.`,
+    vendorDocsDir
+      ? `   Read ${resolve(vendorDocsDir, "INDEX.md")} for a list of all available docs.`
+      : ``,
     `4. Compare the PRD's instructions against the vendor's recommended approach.`,
     `5. Flag every contradiction, impossibility, and ambiguity you find.`,
     `6. Output your findings as the structured JSON described in your system prompt.`,
@@ -77,7 +83,6 @@ export async function runValidator(
     model: config.models.validator,
     maxTurns: 50, // Needs room to fetch multiple vendor docs
     workingDir: config.target.dir,
-    mcpServers: config.mcpServers,
   });
 
   // Extract structured result

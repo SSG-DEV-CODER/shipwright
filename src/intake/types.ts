@@ -16,6 +16,7 @@ export interface PRD {
   acceptanceCriteria: AcceptanceCriterion[];
   deliverables: Deliverable[];
   openQuestions: string[];
+  technologies: string[];
 }
 
 export interface PRDSection {

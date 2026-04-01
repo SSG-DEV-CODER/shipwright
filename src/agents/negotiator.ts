@@ -53,7 +53,6 @@ export async function negotiateContract(
     model: config.models.negotiator,
     maxTurns: 10,
     workingDir: config.target.dir,
-    mcpServers: config.mcpServers,
   });
 
   return result.output;

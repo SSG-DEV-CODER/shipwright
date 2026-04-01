@@ -312,14 +312,28 @@ async function runValidate(args: ParsedArgs): Promise<void> {
   console.log(`   MCP servers: ${Object.keys(config.mcpServers).join(", ") || "none"}\n`);
 
   if (Object.keys(config.mcpServers).length === 0) {
-    console.warn("   ⚠️  No MCP servers configured. Validator needs Context7 for vendor doc access.");
+    console.warn("   ⚠️  No MCP servers configured. Doc fetcher needs Context7 for vendor docs.");
     console.warn("   Add mcp_servers to your config YAML.\n");
+  }
+
+  // Fetch vendor docs first
+  let vendorDocsDir: string | undefined;
+  if (Object.keys(config.mcpServers).length > 0) {
+    const { fetchVendorDocs } = await import("./pipeline/doc-fetcher.js");
+    const { parsePRD: parsePrdLocal } = await import("./intake/prd-parser.js");
+    const prd = parsePrdLocal(prdPath);
+    if (prd.technologies.length > 0) {
+      console.log(`   Fetching vendor docs for: ${prd.technologies.join(", ")}...\n`);
+      const docResult = await fetchVendorDocs(config, prd.technologies, ".");
+      vendorDocsDir = docResult.docsDir;
+      console.log(`   Docs: ${docResult.fetched.length} fetched, ${docResult.cached.length} cached, ${docResult.failed.length} failed\n`);
+    }
   }
 
   const { runValidator, formatValidationReport } = await import("./agents/validator.js");
 
   console.log("   Running validation...\n");
-  const result = await runValidator(config, prdPath);
+  const result = await runValidator(config, prdPath, vendorDocsDir);
 
   // Save report
   const { writeJsonFile: writeJson } = await import("./lib/fs.js");

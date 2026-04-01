@@ -65,6 +65,7 @@ Run these after all steps are complete:
 ## Your Workflow
 
 1. Read the PRD and any expertise/scout context provided
-2. Optionally explore the target codebase with Read/Glob/Grep
-3. Write the plan file to the path specified in the prompt
-4. The plan must be complete and self-contained — the generator should need nothing else
+2. If vendor documentation is available (path provided in the context), read INDEX.md to see what docs exist, then read the relevant docs for technologies in this sprint. Include vendor doc file paths in your plan so the generator can reference them during implementation.
+3. Optionally explore the target codebase with Read/Glob/Grep
+4. Write the plan file to the path specified in the prompt
+5. The plan must be complete and self-contained — the generator should need nothing else

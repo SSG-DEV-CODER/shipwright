@@ -37,6 +37,7 @@ export function parsePRD(filePath: string): PRD {
     acceptanceCriteria,
     deliverables,
     openQuestions,
+    technologies: extractTechnologies(sections, raw),
   };
 }
 
@@ -191,6 +192,56 @@ function extractDeliverables(
   }
 
   return deliverables;
+}
+
+/**
+ * Extract technology names from PRD content.
+ * Scans for backtick-quoted names, package.json-style deps, and known tech patterns.
+ */
+function extractTechnologies(sections: PRDSection[], rawText: string): string[] {
+  const techs = new Set<string>();
+
+  // Known technology patterns to scan for
+  const knownTechs: Array<[RegExp, string]> = [
+    [/next\.?js\s*\d*/i, "Next.js"],
+    [/payload\s*cms\s*[\d.x]*/i, "Payload CMS"],
+    [/supabase/i, "Supabase"],
+    [/tailwind\s*(?:css)?\s*v?\d*/i, "Tailwind CSS"],
+    [/typescript/i, "TypeScript"],
+    [/postgres(?:ql)?/i, "PostgreSQL"],
+    [/docker/i, "Docker"],
+    [/react/i, "React"],
+    [/shadcn/i, "shadcn/ui"],
+    [/umami/i, "Umami"],
+    [/growthbook/i, "GrowthBook"],
+    [/openai/i, "OpenAI"],
+    [/lexical/i, "Lexical Editor"],
+    [/swr/i, "SWR"],
+    [/pnpm/i, "pnpm"],
+    [/bun(?:\s|$)/i, "Bun"],
+  ];
+
+  // Scan full text for known technologies
+  for (const [pattern, name] of knownTechs) {
+    if (pattern.test(rawText)) {
+      techs.add(name);
+    }
+  }
+
+  // Extract backtick-quoted items that look like packages/frameworks
+  const backtickMatches = rawText.matchAll(/`([^`]+)`/g);
+  for (const match of backtickMatches) {
+    const item = match[1].trim();
+    // Skip if it looks like a file path, command, or code snippet
+    if (item.includes("/") || item.includes("(") || item.includes("{") || item.length > 50) continue;
+    if (item.startsWith("--") || item.startsWith("$")) continue;
+    // Keep if it looks like a package name (e.g., @scope/package, package-name)
+    if (item.match(/^@?[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)?$/i) && item.length > 2) {
+      techs.add(item);
+    }
+  }
+
+  return [...techs];
 }
 
 function extractOpenQuestions(sections: PRDSection[]): string[] {

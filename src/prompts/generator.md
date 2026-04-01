@@ -40,3 +40,11 @@ If the feedback says a criterion PASSES, the code behind it is CORRECT. Do NOT:
 - Run broad changes like reformatting or renaming that could touch passing files
 
 Only modify files directly related to FAILING criteria. If a file serves both a passing and failing criterion, make minimal, targeted changes.
+
+## Vendor Documentation
+
+When the plan or feedback references local vendor documentation (a file path to `.shipwright/vendor-docs/`), use the Read tool to consult it before implementing technology-specific code. Check:
+- Correct API usage and function signatures
+- Required configuration format and options
+- Import paths and package names
+- Known gotchas and version-specific behavior

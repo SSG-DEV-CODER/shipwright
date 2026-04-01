@@ -95,11 +95,36 @@ export async function runPipeline(
     log("EXPERTISE", `Loaded ${expertise.files.length} expertise files (${expertise.totalLines} lines)`);
   }
 
+  // --- Phase: DOC_FETCH ---
+  let vendorDocsDir: string | undefined;
+  if (Object.keys(config.mcpServers).length > 0) {
+    log("DOC_FETCH", "Fetching vendor documentation...");
+    try {
+      const { fetchVendorDocs } = await import("./doc-fetcher.js");
+      const technologies = prd.technologies.length > 0 ? prd.technologies : [];
+
+      if (technologies.length > 0) {
+        log("DOC_FETCH", `Technologies: ${technologies.join(", ")}`);
+        const docResult = await fetchVendorDocs(config, technologies, config.target.dir);
+        vendorDocsDir = docResult.docsDir;
+        log("DOC_FETCH", `Fetched: ${docResult.fetched.length}, Cached: ${docResult.cached.length}, Failed: ${docResult.failed.length}`);
+        log("DOC_FETCH", `Docs at: ${docResult.docsDir}`);
+        writeJsonFile(resolve(stateDir, "doc-fetch-result.json"), docResult);
+      } else {
+        log("DOC_FETCH", "No technologies identified in PRD. Skipping.");
+      }
+    } catch (err) {
+      log("DOC_FETCH", `Doc fetch failed (non-fatal): ${err}`);
+    }
+  } else {
+    log("DOC_FETCH", "No MCP servers configured. Skipping.");
+  }
+
   // --- Phase: PRD VALIDATION ---
   if (!options.noValidate) {
     log("VALIDATE", "Validating PRD against vendor documentation...");
     try {
-      const validationResult = await runValidator(config, prdPath);
+      const validationResult = await runValidator(config, prdPath, vendorDocsDir);
       writeJsonFile(resolve(stateDir, "validation-report.json"), validationResult);
       console.log(formatValidationReport(validationResult));
 
@@ -245,7 +270,10 @@ export async function runPipeline(
     const planFilePath = resolve(sprintDir, "plan.md");
     log("PLAN", `Running planner → ${planFilePath}`);
 
-    const contextForPlanner = scoutText + "\n\n" + preflightText + decisionContext;
+    const vendorDocsRef = vendorDocsDir
+      ? `\n## Vendor Documentation\nLocal vendor docs available at: ${vendorDocsDir}\nRead ${resolve(vendorDocsDir, "INDEX.md")} for a list of all available docs. Include doc file paths in your plan so the generator can reference them.\n`
+      : "";
+    const contextForPlanner = scoutText + "\n\n" + preflightText + vendorDocsRef + decisionContext;
     await runPlanner(config, sprint, planFilePath, prdPath, contextForPlanner, expertiseText);
 
     if (fileExists(planFilePath)) {
@@ -437,7 +465,7 @@ export async function runPipeline(
             infraParts.push(
               `### Docker Required`,
               `Docker must be installed and running for Supabase local dev.`,
-              `Use Context7 MCP to fetch the official Supabase local development documentation.`,
+              vendorDocsDir ? `Read local vendor docs at: ${vendorDocsDir}/supabase/` : `Check official Supabase documentation for local dev setup.`,
               ``,
             );
           }
@@ -447,7 +475,7 @@ export async function runPipeline(
               `### Supabase CLI Required`,
               `Install: brew install supabase/tap/supabase (or npm i -g supabase)`,
               `Then: supabase init && supabase start`,
-              `Use Context7 MCP to fetch official Supabase CLI documentation.`,
+              vendorDocsDir ? `Read local vendor docs at: ${vendorDocsDir}/supabase/` : `Check official Supabase CLI documentation.`,
               ``,
             );
           }
@@ -463,9 +491,12 @@ export async function runPipeline(
 
           infraParts.push(
             `### Documentation Access`,
-            `If you need official documentation for any technology:`,
-            `1. Use the Context7 MCP server to fetch docs (preferred — fast, structured)`,
-            `2. If Context7 doesn't have it, use the agent-browser MCP to find official docs`,
+            vendorDocsDir
+              ? `Official vendor documentation is available locally at: ${vendorDocsDir}/`
+              : `No local vendor docs available.`,
+            vendorDocsDir
+              ? `Read ${resolve(vendorDocsDir, "INDEX.md")} for a list of all available docs.`
+              : ``,
             ``,
             `After setup, verify with: pnpm dev (should start without 500 errors)`,
           );

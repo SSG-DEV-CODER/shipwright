@@ -9,6 +9,7 @@ import type { SprintPlan, AcceptanceCriterion } from "../intake/types.js";
 export type PipelinePhase =
   | "init"
   | "parsing"
+  | "doc_fetching"
   | "scouting"
   | "planning"
   | "negotiating"

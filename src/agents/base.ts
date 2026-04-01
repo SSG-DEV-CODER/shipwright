@@ -26,7 +26,6 @@ export interface AgentOptions {
   persistSession?: boolean;
   verbose?: boolean;
   outputSchema?: string; // Path to JSON Schema — used by Codex, ignored by Claude
-  mcpServers?: Record<string, any>; // MCP servers passed to Claude SDK (ignored by Codex)
 }
 
 export interface AgentResult {
@@ -117,9 +116,6 @@ async function runClaudeAgent(options: AgentOptions): Promise<AgentResult> {
         ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
         cwd: options.workingDir ?? process.cwd(),
         permissionMode: "bypassPermissions",
-        ...(options.mcpServers && Object.keys(options.mcpServers).length > 0
-          ? { mcpServers: options.mcpServers }
-          : {}),
       },
     });
 
