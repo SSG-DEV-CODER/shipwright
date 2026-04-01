@@ -74,7 +74,7 @@ export async function runValidator(
     systemPrompt,
     userPrompt,
     tools: AGENT_TOOLS[VALIDATOR_ROLE],
-    model: config.models.planner, // Use the same model as the planner (Opus)
+    model: config.models.validator,
     maxTurns: 50, // Needs room to fetch multiple vendor docs
     workingDir: config.target.dir,
     mcpServers: config.mcpServers,
@@ -95,6 +95,28 @@ export async function runValidator(
   );
 
   if (parsed && parsed.summary && parsed.issues) {
+    // Post-process: downgrade criticals that lack specific doc citations
+    for (const issue of parsed.issues) {
+      if (issue.severity === "critical") {
+        const hasSource = issue.docSource && issue.docSource.length > 10 && issue.docSource !== "N/A";
+        const hasSpecificVendorQuote = issue.vendorSays && issue.vendorSays.length > 20;
+        if (!hasSource || !hasSpecificVendorQuote) {
+          issue.severity = "warning";
+        }
+      }
+    }
+
+    // Recompute summary counts and verdict from post-processed issues
+    const criticals = parsed.issues.filter((i) => i.severity === "critical").length;
+    const warnings = parsed.issues.filter((i) => i.severity === "warning").length;
+    const infos = parsed.issues.filter((i) => i.severity === "info").length;
+    parsed.summary = {
+      critical: criticals,
+      warning: warnings,
+      info: infos,
+      verdict: criticals > 0 ? "BLOCK" : warnings > 0 ? "REVIEW" : "PASS",
+    };
+
     return parsed;
   }
 

@@ -266,6 +266,10 @@ async function resumePipeline(args: ParsedArgs): Promise<void> {
   // Resume from the failed/in-progress sprint
   const result = await runPipeline(config, state.prdPath, {
     sprintFilter: state.currentSprintIndex + 1,
+    noCommit: args.flags["no-commit"] === true,
+    noImprove: args.flags["no-improve"] === true,
+    noValidate: args.flags["no-validate"] === true,
+    verbose: args.flags.verbose === true,
   });
 
   process.exit(result.status === "complete" ? 0 : result.status === "awaiting_decision" ? 2 : 1);
