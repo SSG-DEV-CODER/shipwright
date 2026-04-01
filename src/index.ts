@@ -85,6 +85,7 @@ async function runBuild(args: ParsedArgs): Promise<void> {
     sprintFilter: args.flags.sprint ? parseInt(args.flags.sprint as string, 10) : undefined,
     noCommit: args.flags["no-commit"] === true,
     noImprove: args.flags["no-improve"] === true,
+    noValidate: args.flags["no-validate"] === true,
     verbose: args.flags.verbose === true,
   });
 
@@ -281,6 +282,51 @@ async function initConfig(): Promise<void> {
   }
 }
 
+async function runValidate(args: ParsedArgs): Promise<void> {
+  const prdPath = args.positional[0];
+  if (!prdPath) {
+    console.error("Error: PRD file path required");
+    console.error("Usage: shipwright validate <prd-path> [--config <path>]");
+    process.exit(1);
+  }
+
+  const config = applyCliOverrides(
+    loadConfig(args.flags.config as string | undefined),
+    args.flags as Record<string, string>
+  );
+
+  console.log(`\n⚓ Shipwright v${VERSION} — PRD Validation`);
+  console.log(`   PRD: ${prdPath}`);
+  console.log(`   MCP servers: ${Object.keys(config.mcpServers).join(", ") || "none"}\n`);
+
+  if (Object.keys(config.mcpServers).length === 0) {
+    console.warn("   ⚠️  No MCP servers configured. Validator needs Context7 for vendor doc access.");
+    console.warn("   Add mcp_servers to your config YAML.\n");
+  }
+
+  const { runValidator, formatValidationReport } = await import("./agents/validator.js");
+
+  console.log("   Running validation...\n");
+  const result = await runValidator(config, prdPath);
+
+  // Save report
+  const { writeJsonFile: writeJson } = await import("./lib/fs.js");
+  writeJson("validation-report.json", result);
+
+  // Display report
+  console.log(formatValidationReport(result));
+
+  if (result.summary.verdict === "BLOCK") {
+    console.log("   Report saved to: validation-report.json");
+    process.exit(1);
+  } else if (result.summary.verdict === "REVIEW") {
+    console.log("   Report saved to: validation-report.json");
+    process.exit(0);
+  } else {
+    process.exit(0);
+  }
+}
+
 function showHelp(): void {
   console.log(`
 ⚓ Shipwright v${VERSION} — Adversarial build system with expert learning
@@ -290,6 +336,7 @@ USAGE:
 
 COMMANDS:
   build <prd-path>         Run a PRD through the adversarial pipeline
+  validate <prd-path>      Validate PRD against vendor docs (runs before build)
   expertise <subcmd>       Manage expertise files (list|validate|improve|create|question)
   status                   Show current pipeline state
   resume                   Resume interrupted pipeline from checkpoint
@@ -307,6 +354,7 @@ BUILD OPTIONS:
   --verbose                Verbose logging
   --no-commit              Skip git commits
   --no-improve             Skip expertise self-improvement
+  --no-validate            Skip PRD validation step
   --model-override <r>=<m> Override model for a role (e.g., planner=claude-sonnet-4-20250514)
 
 EXAMPLES:
@@ -325,6 +373,9 @@ const args = parseArgs(process.argv);
 switch (args.command) {
   case "build":
     await runBuild(args);
+    break;
+  case "validate":
+    await runValidate(args);
     break;
   case "expertise":
     await runExpertise(args);

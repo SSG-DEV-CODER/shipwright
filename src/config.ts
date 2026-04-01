@@ -30,6 +30,7 @@ export interface ShipwrightConfig {
     evaluator: string;
     negotiator: string;
     improver: string;
+    validator: string;
   };
 
   pipeline: {
@@ -84,6 +85,7 @@ const DEFAULT_CONFIG: ShipwrightConfig = {
     evaluator: "codex",
     negotiator: "claude-opus-4-20250514",
     improver: "claude-sonnet-4-20250514",
+    validator: "claude-opus-4-20250514",
   },
 
   pipeline: {

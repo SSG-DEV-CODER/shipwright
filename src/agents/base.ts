@@ -13,7 +13,7 @@ import { resolve } from "path";
 import { estimateCost, type CostEntry } from "../lib/cost.js";
 import type { ShipwrightConfig } from "../config.js";
 
-export type AgentRole = "scout" | "planner" | "generator" | "evaluator" | "negotiator" | "improver";
+export type AgentRole = "scout" | "planner" | "generator" | "evaluator" | "negotiator" | "improver" | "validator";
 
 export interface AgentOptions {
   role: AgentRole;
@@ -43,6 +43,7 @@ export const AGENT_TOOLS: Record<AgentRole, string[]> = {
   evaluator: ["Read", "Bash", "Glob", "Grep"],
   negotiator: ["Read"],
   improver: ["Read", "Glob", "Grep"],
+  validator: ["Read", "Glob", "Grep", "Bash"],
 };
 
 export function getModelForRole(role: AgentRole, config: ShipwrightConfig): string {

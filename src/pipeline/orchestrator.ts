@@ -21,6 +21,7 @@ import { runPlanner } from "../agents/planner.js";
 import { runGenerator } from "../agents/generator.js";
 import { runEvaluator } from "../agents/evaluator.js";
 import { runImprover } from "../agents/improver.js";
+import { runValidator, formatValidationReport } from "../agents/validator.js";
 import { applyExpertiseUpdate } from "../expertise/updater.js";
 import { writeProgress } from "../tracking/progress.js";
 import { BuildLog } from "../tracking/log.js";
@@ -50,6 +51,7 @@ export async function runPipeline(
     sprintFilter?: number;
     noCommit?: boolean;
     noImprove?: boolean;
+    noValidate?: boolean;
     verbose?: boolean;
   } = {}
 ): Promise<PipelineResult> {
@@ -91,6 +93,41 @@ export async function runPipeline(
   const expertiseText = formatExpertiseForPrompt(expertise);
   if (expertise.files.length > 0) {
     log("EXPERTISE", `Loaded ${expertise.files.length} expertise files (${expertise.totalLines} lines)`);
+  }
+
+  // --- Phase: PRD VALIDATION ---
+  if (!options.noValidate) {
+    log("VALIDATE", "Validating PRD against vendor documentation...");
+    try {
+      const validationResult = await runValidator(config, prdPath);
+      writeJsonFile(resolve(stateDir, "validation-report.json"), validationResult);
+      console.log(formatValidationReport(validationResult));
+
+      if (validationResult.summary.verdict === "BLOCK") {
+        log("VALIDATE", `🛑 PRD BLOCKED — ${validationResult.summary.critical} critical issues found.`);
+        log("VALIDATE", "Fix the PRD before running Shipwright. See .shipwright/validation-report.json");
+
+        return {
+          prdPath,
+          status: "failed",
+          sprints: [],
+          totalCostUsd: costLedger.totalCostUsd,
+          totalDurationMs: Date.now() - startTime,
+          expertiseFilesUpdated: [],
+        };
+      }
+
+      if (validationResult.summary.verdict === "REVIEW") {
+        log("VALIDATE", `⚠️  PRD has ${validationResult.summary.warning} warnings. Proceeding — review recommended.`);
+      } else {
+        log("VALIDATE", "✅ PRD validation passed.");
+      }
+    } catch (err) {
+      log("VALIDATE", `Validation failed (non-fatal): ${err}`);
+      log("VALIDATE", "Proceeding without validation — MCP servers may not be available.");
+    }
+  } else {
+    log("VALIDATE", "Skipped (--no-validate flag).");
   }
 
   // --- Phase: PRE-FLIGHT ---

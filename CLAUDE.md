@@ -15,15 +15,16 @@ PRD file → Parse → For each sprint:
     → Fail? → Retry with feedback (max 3) → Fail all? → Stop + report
 ```
 
-### 6 Agents
+### 7 Agents
 
 | Agent | Model | Tools | Role |
 |-------|-------|-------|------|
+| Validator | opus + MCP | Read, Glob, Grep, Bash, Context7, agent-browser | PRD validation against vendor docs (BLOCKS build on critical issues) |
 | Scout | sonnet | Read, Glob, Grep | Parallel codebase exploration |
 | Planner | opus | Read, Glob, Grep | PRD → sprint plan |
 | Negotiator | opus | Read | Contract mediation |
 | Generator | opus | Read, Write, Edit, Bash, Glob, Grep | Code implementation (ONLY writer) |
-| Evaluator | codex (via Codex CLI) | Read, Bash, Glob, Grep | Adversarial review (NO write, read-only sandbox) |
+| Evaluator | codex (via Codex SDK) | Read, Bash, Glob, Grep | Adversarial review (full-access sandbox) |
 | Improver | sonnet | Read, Glob, Grep | Expertise updates |
 
 ### Key Principle: Adversarial Tension
