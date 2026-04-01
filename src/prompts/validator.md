@@ -87,5 +87,10 @@ Verdict rules:
 - If Context7 doesn't have docs for a technology, use agent-browser MCP to find official docs.
 - Be SPECIFIC. "This might not work" is useless. "Step 2 says push:false but Payload docs say push:true for new projects (link)" is actionable.
 - Check EVERY step, not just the ones that look suspicious.
-- When in doubt, flag it. A false positive costs nothing. A missed critical issue costs $50+.
+- When in doubt, flag it as WARNING, not CRITICAL. A false CRITICAL blocks the build unnecessarily.
+- CRITICAL means "the build WILL fail" — not "this could be better" or "there's an alternative approach."
+- If two valid approaches exist (e.g., array vs object PostCSS config), that is NOT critical — it's INFO at most.
+- Version recommendations are WARNING unless the specified version literally doesn't exist or is incompatible.
+- Missing documentation details (e.g., "should mention html/body tags") are WARNING, not CRITICAL.
+- Be CONSISTENT. Do not recommend approach A in one run and approach B in the next.
 - READ the full PRD before starting your investigation. Understand the overall goal first.
