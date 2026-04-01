@@ -210,7 +210,7 @@ async function showStatus(): Promise<void> {
   console.log("");
 }
 
-async function resumePipeline(): Promise<void> {
+async function resumePipeline(args: ParsedArgs): Promise<void> {
   const statePath = ".shipwright/state.json";
   if (!fileExists(statePath)) {
     console.log("No pipeline state to resume. Run `shipwright build <prd>` first.");
@@ -252,7 +252,7 @@ async function resumePipeline(): Promise<void> {
   console.log(`   Phase: ${state.phase}`);
   console.log(`   Sprint: ${state.currentSprintIndex + 1}/${state.sprints.length}\n`);
 
-  const config = loadConfig();
+  const config = loadConfig(args.flags.config as string | undefined);
 
   // Resume from the failed/in-progress sprint
   const result = await runPipeline(config, state.prdPath, {
@@ -333,7 +333,7 @@ switch (args.command) {
     await showStatus();
     break;
   case "resume":
-    await resumePipeline();
+    await resumePipeline(args);
     break;
   case "init":
     await initConfig();
