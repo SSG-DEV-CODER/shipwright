@@ -4,8 +4,8 @@
 
 // Subscription pricing — all models are flat-rate. Token tracking for telemetry only.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-20250514": { input: 0, output: 0 },
-  "claude-sonnet-4-20250514": { input: 0, output: 0 },
+  "claude-opus-4-6": { input: 0, output: 0 },
+  "claude-sonnet-4-6": { input: 0, output: 0 },
   "claude-haiku-4-5-20251001": { input: 0, output: 0 },
   "codex": { input: 0, output: 0 },
 };

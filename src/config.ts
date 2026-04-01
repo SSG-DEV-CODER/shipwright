@@ -79,13 +79,13 @@ const DEFAULT_CONFIG: ShipwrightConfig = {
   },
 
   models: {
-    scout: "claude-sonnet-4-20250514",
-    planner: "claude-opus-4-20250514",
-    generator: "claude-opus-4-20250514",
+    scout: "claude-sonnet-4-6",
+    planner: "claude-opus-4-6",
+    generator: "claude-opus-4-6",
     evaluator: "codex",
-    negotiator: "claude-opus-4-20250514",
-    improver: "claude-sonnet-4-20250514",
-    validator: "claude-opus-4-20250514",
+    negotiator: "claude-sonnet-4-6",
+    improver: "claude-sonnet-4-6",
+    validator: "claude-sonnet-4-6",
   },
 
   pipeline: {
