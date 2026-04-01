@@ -493,13 +493,26 @@ export async function runPipeline(
       // Log the attempt
       buildLog.logBuildAttempt(attempt, evalResult);
 
+      // Log per-criterion scores (always — pass or fail)
+      if (evalResult.scores && evalResult.scores.length > 0) {
+        log("EVAL", `┌─────────────────────────────────────────────────────────────`);
+        for (const s of evalResult.scores) {
+          const icon = s.score >= 7 ? "✓" : "✗";
+          const cat = s.failureCategory ? ` [${s.failureCategory}]` : "";
+          log("EVAL", `│ ${icon} ${s.criterionId}: ${s.score}/10${cat} — ${s.criterion}`);
+          if (s.score < 7 && s.reasoning) {
+            log("EVAL", `│   → ${s.reasoning.slice(0, 120)}`);
+          }
+        }
+        log("EVAL", `└─────────────────────────────────────────────────────────────`);
+      }
+
       if (evalResult.passed) {
         log("EVAL", `PASSED (score: ${evalResult.overallScore}/10)`);
         passed = true;
         break;
       } else {
         log("EVAL", `FAILED (score: ${evalResult.overallScore}/10)`);
-        log("EVAL", `Failures: ${(evalResult.failureReasons ?? []).join("; ")}`);
 
         // Log failure categories
         const cats = categoriseFailures(evalResult);
