@@ -72,9 +72,17 @@ async function runBuild(args: ParsedArgs): Promise<void> {
   console.log(`\n⚓ Shipwright v${VERSION}`);
   console.log(`   PRD: ${prdPath}`);
   console.log(`   Target: ${config.target.dir}`);
-  console.log(`   Models: planner=${config.models.planner}, generator=${config.models.generator}`);
   console.log(`   Max retries: ${config.pipeline.maxRetries}`);
-  console.log(`   Pass threshold: ${config.pipeline.evalPassThreshold}/10\n`);
+  console.log(`   Pass threshold: ${config.pipeline.evalPassThreshold}/10`);
+  console.log(`   MCP servers: ${Object.keys(config.mcpServers).join(", ") || "none"}`);
+  console.log(`   Agents:`);
+  console.log(`     Scout:      ${config.models.scout}`);
+  console.log(`     Planner:    ${config.models.planner}`);
+  console.log(`     Generator:  ${config.models.generator}`);
+  console.log(`     Evaluator:  ${config.models.evaluator}`);
+  console.log(`     Negotiator: ${config.models.negotiator}`);
+  console.log(`     Improver:   ${config.models.improver}`);
+  console.log(`     Validator:  ${config.models.validator}\n`);
 
   if (args.flags["dry-run"]) {
     console.log("   Mode: DRY RUN (plan + negotiate only)\n");
