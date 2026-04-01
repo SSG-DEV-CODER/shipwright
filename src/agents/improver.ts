@@ -62,6 +62,7 @@ export async function runImprover(
     model: config.models.improver,
     maxTurns: 15,
     workingDir: config.target.dir,
+    mcpServers: config.mcpServers,
   });
 
   return extractJson<ExpertiseUpdate>(

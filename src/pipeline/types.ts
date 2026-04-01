@@ -17,7 +17,8 @@ export type PipelinePhase =
   | "improving"
   | "committing"
   | "complete"
-  | "failed";
+  | "failed"
+  | "awaiting_decision";
 
 export interface PipelineState {
   prdPath: string;
@@ -95,7 +96,7 @@ export interface NegotiationRound {
  * - PLAN: Missing steps, wrong structure, incomplete scope → Planner amends plan
  * - INFRA: No database, missing env vars, deps not installed → Generator gets setup instructions
  */
-export type FailureCategory = "code" | "plan" | "infra";
+export type FailureCategory = "code" | "plan" | "infra" | "decision";
 
 export interface BuildAttempt {
   attempt: number;
@@ -131,6 +132,22 @@ export interface CategorisedFailure {
   criterionIds: string[]; // which criteria are affected
 }
 
+export interface DecisionRequest {
+  question: string;
+  context: string;
+  options: string[];
+  sprint: string;
+  attempt: number;
+  timestamp: string;
+}
+
+export interface DecisionAnswer {
+  question: string;
+  answer: string;
+  answeredAt: string;
+  answeredBy: string;
+}
+
 // --- Scout Reports ---
 
 export interface ScoutReport {
@@ -160,9 +177,12 @@ export interface SprintResult {
 
 export interface PipelineResult {
   prdPath: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "awaiting_decision";
   sprints: SprintResult[];
   totalCostUsd: number;
   totalDurationMs: number;
   expertiseFilesUpdated: string[];
 }
+
+// --- Environment Discovery ---
+export type { EnvironmentReport, CheckResult } from "./preflight.js";

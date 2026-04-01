@@ -49,3 +49,10 @@ limits:
   max_cost_per_sprint: 5.00
   max_cost_per_build: 25.00
   max_tokens_per_agent_call: 200000
+  enforce: false  # Set true to halt pipeline when cost limits exceeded
+
+# MCP servers (optional — passed to Claude agents for external tool access)
+# mcp_servers:
+#   context7:
+#     command: "npx"
+#     args: ["-y", "@upstash/context7-mcp"]

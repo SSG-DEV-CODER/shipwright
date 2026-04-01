@@ -2,12 +2,11 @@
  * Token/cost tracking per agent invocation
  */
 
-// Pricing per million tokens (as of 2025-05)
+// Subscription pricing — all models are flat-rate. Token tracking for telemetry only.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "claude-opus-4-20250514": { input: 15.0, output: 75.0 },
-  "claude-sonnet-4-20250514": { input: 3.0, output: 15.0 },
-  "claude-haiku-4-5-20251001": { input: 0.8, output: 4.0 },
-  // Codex uses subscription pricing — track tokens but cost is flat rate
+  "claude-opus-4-20250514": { input: 0, output: 0 },
+  "claude-sonnet-4-20250514": { input: 0, output: 0 },
+  "claude-haiku-4-5-20251001": { input: 0, output: 0 },
   "codex": { input: 0, output: 0 },
 };
 

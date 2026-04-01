@@ -34,7 +34,7 @@ export function writeProgress(config: ShipwrightConfig, state: PipelineState): v
 
     if (sprint.attempts.length > 0) {
       const lastAttempt = sprint.attempts[sprint.attempts.length - 1];
-      lines.push(`- **Attempts**: ${sprint.attempts.length}/${3}`);
+      lines.push(`- **Attempts**: ${sprint.attempts.length}`);
       lines.push(`- **Score**: ${lastAttempt.evalResult.overallScore}/10`);
       lines.push(`- **Files changed**: ${lastAttempt.filesChanged.length}`);
       lines.push(`- **Duration**: ${formatDuration(sprint.durationMs)}`);

@@ -60,6 +60,7 @@ export async function runGenerator(
     maxTurns: undefined, // Unlimited — runs until plan is complete
     workingDir: config.target.dir,
     persistSession: true,
+    mcpServers: config.mcpServers,
   });
 
   return result.output;

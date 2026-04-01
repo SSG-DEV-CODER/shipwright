@@ -16,7 +16,7 @@ import { runPipeline } from "./pipeline/orchestrator.js";
 import { loadExpertise } from "./expertise/loader.js";
 import { parsePRD } from "./intake/prd-parser.js";
 import { deriveSprints } from "./intake/sprint-planner.js";
-import { fileExists, readJsonFile } from "./lib/fs.js";
+import { fileExists, readJsonFile, readText } from "./lib/fs.js";
 import type { PipelineState } from "./pipeline/types.js";
 
 const VERSION = "0.1.0";
@@ -88,8 +88,8 @@ async function runBuild(args: ParsedArgs): Promise<void> {
     verbose: args.flags.verbose === true,
   });
 
-  // Exit with appropriate code
-  process.exit(result.status === "complete" ? 0 : 1);
+  // Exit with appropriate code: 0=success, 1=failure, 2=awaiting decision
+  process.exit(result.status === "complete" ? 0 : result.status === "awaiting_decision" ? 2 : 1);
 }
 
 async function runExpertise(args: ParsedArgs): Promise<void> {
@@ -228,6 +228,25 @@ async function resumePipeline(): Promise<void> {
     return;
   }
 
+  // Handle decision resume
+  if (state.phase === "awaiting_decision") {
+    const { readDecisionAnswer } = await import("./pipeline/decisions.js");
+    const answer = readDecisionAnswer(".shipwright");
+    if (!answer || !answer.answer) {
+      console.log("\n⚓ Pipeline is awaiting a decision.\n");
+      console.log("  Edit .shipwright/decisions-pending.json with your answer.");
+      console.log("  Then run: shipwright resume\n");
+
+      if (fileExists(".shipwright/DECISION-REQUIRED.md")) {
+        const md = readText(".shipwright/DECISION-REQUIRED.md");
+        console.log(md);
+      }
+      return;
+    }
+    console.log(`\n⚓ Decision answer: ${answer.answer}`);
+    console.log(`  Injecting into sprint context and resuming...\n`);
+  }
+
   console.log(`\n⚓ Resuming pipeline from sprint ${state.currentSprintIndex + 1}...`);
   console.log(`   PRD: ${state.prdPath}`);
   console.log(`   Phase: ${state.phase}`);
@@ -240,7 +259,7 @@ async function resumePipeline(): Promise<void> {
     sprintFilter: state.currentSprintIndex + 1,
   });
 
-  process.exit(result.status === "complete" ? 0 : 1);
+  process.exit(result.status === "complete" ? 0 : result.status === "awaiting_decision" ? 2 : 1);
 }
 
 async function initConfig(): Promise<void> {

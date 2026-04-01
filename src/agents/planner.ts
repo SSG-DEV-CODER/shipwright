@@ -78,6 +78,7 @@ export async function runPlanner(
     model: config.models.planner,
     maxTurns: undefined, // Unlimited
     workingDir: config.target.dir,
+    mcpServers: config.mcpServers,
   });
 
   return result.output;

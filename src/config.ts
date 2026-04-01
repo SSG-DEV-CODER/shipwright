@@ -6,6 +6,13 @@ import { parse as parseYaml } from "yaml";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";
 
+export interface McpServerConfig {
+  type?: "stdio";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
 export interface ShipwrightConfig {
   target: {
     dir: string;
@@ -54,7 +61,10 @@ export interface ShipwrightConfig {
     maxCostPerSprint: number;
     maxCostPerBuild: number;
     maxTokensPerAgentCall: number;
+    enforce: boolean;
   };
+
+  mcpServers: Record<string, McpServerConfig>;
 }
 
 const DEFAULT_CONFIG: ShipwrightConfig = {
@@ -102,7 +112,10 @@ const DEFAULT_CONFIG: ShipwrightConfig = {
     maxCostPerSprint: 5.0,
     maxCostPerBuild: 25.0,
     maxTokensPerAgentCall: 200_000,
+    enforce: false,
   },
+
+  mcpServers: {},
 };
 
 export function loadConfig(configPath?: string): ShipwrightConfig {
@@ -160,6 +173,12 @@ function mergeConfig(
     if (l.max_cost_per_sprint !== undefined) config.limits.maxCostPerSprint = l.max_cost_per_sprint as number;
     if (l.max_cost_per_build !== undefined) config.limits.maxCostPerBuild = l.max_cost_per_build as number;
     if (l.max_tokens_per_agent_call !== undefined) config.limits.maxTokensPerAgentCall = l.max_tokens_per_agent_call as number;
+    if (l.enforce !== undefined) config.limits.enforce = l.enforce as boolean;
+  }
+
+  // MCP servers
+  if (overrides.mcp_servers && typeof overrides.mcp_servers === "object") {
+    config.mcpServers = overrides.mcp_servers as Record<string, McpServerConfig>;
   }
 
   return config;

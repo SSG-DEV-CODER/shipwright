@@ -27,7 +27,10 @@ import { BuildLog } from "../tracking/log.js";
 import { gitCommit, isGitRepo, gitInit } from "../tracking/git.js";
 import { writeJsonFile, writeText, ensureDir, readText, fileExists } from "../lib/fs.js";
 import { CostLedger } from "../lib/cost.js";
+import { runPreflight, formatPreflightForPrompt, formatPreflightOneLiner } from "./preflight.js";
+import { writeDecisionRequired, notifyHuman, readDecisionAnswer } from "./decisions.js";
 import type { ShipwrightConfig } from "../config.js";
+import type { DecisionRequest } from "./types.js";
 import type {
   PipelineState,
   PipelineResult,
@@ -90,6 +93,13 @@ export async function runPipeline(
     log("EXPERTISE", `Loaded ${expertise.files.length} expertise files (${expertise.totalLines} lines)`);
   }
 
+  // --- Phase: PRE-FLIGHT ---
+  log("PREFLIGHT", "Running environment discovery...");
+  const preflightReport = runPreflight(resolve(config.target.dir));
+  writeJsonFile(resolve(stateDir, "environment.json"), preflightReport);
+  log("PREFLIGHT", formatPreflightOneLiner(preflightReport));
+  const preflightText = formatPreflightForPrompt(preflightReport);
+
   // Initialize state
   const state: PipelineState = {
     prdPath,
@@ -110,6 +120,21 @@ export async function runPipeline(
   };
 
   saveState(stateDir, state);
+
+  // Check for pending decision answer (resume after decision pause)
+  const decisionAnswer = readDecisionAnswer(stateDir);
+  let decisionContext = "";
+  if (decisionAnswer && decisionAnswer.answer) {
+    log("DECISION", `Resuming with human decision: ${decisionAnswer.answer}`);
+    decisionContext = [
+      `\n## Human Decision`,
+      `The human has answered a pending question:`,
+      `Q: ${decisionAnswer.question}`,
+      `A: ${decisionAnswer.answer}`,
+      ``,
+      `Incorporate this decision into your implementation.\n`,
+    ].join("\n");
+  }
 
   // --- Sprint Loop ---
   const sprintResults: PipelineResult["sprints"] = [];
@@ -168,7 +193,8 @@ export async function runPipeline(
     const planFilePath = resolve(sprintDir, "plan.md");
     log("PLAN", `Running planner → ${planFilePath}`);
 
-    await runPlanner(config, sprint, planFilePath, prdPath, scoutText, expertiseText);
+    const contextForPlanner = scoutText + "\n\n" + preflightText + decisionContext;
+    await runPlanner(config, sprint, planFilePath, prdPath, contextForPlanner, expertiseText);
 
     if (fileExists(planFilePath)) {
       const planContent = readText(planFilePath);
@@ -210,6 +236,60 @@ export async function runPipeline(
           }
         }
 
+        // ESCALATION: if INFRA failure repeats 2+ times without meaningful improvement, escalate to DECISION
+        if (categories.hasInfra && attempt > 2) {
+          const prevAttempt = sprintState.attempts[sprintState.attempts.length - 2];
+          if (prevAttempt) {
+            const prevCats = categoriseFailures(prevAttempt.evalResult);
+            if (prevCats.hasInfra && (lastEvalResult.overallScore - prevAttempt.evalResult.overallScore) < 1.0) {
+              log("ESCALATE", "INFRA failure repeating without meaningful improvement → escalating to DECISION");
+              categories.hasDecision = true;
+            }
+          }
+        }
+
+        // DECISION failures → pause pipeline for human input
+        if (categories.hasDecision) {
+          log("DECISION", "DECISION failure detected → pausing pipeline for human input...");
+
+          const decisionFailures = (lastEvalResult.failureCategories ?? [])
+            .filter((f) => f.category === "decision")
+            .map((f) => f.description);
+
+          const decisionScores = lastEvalResult.scores
+            .filter((s) => s.failureCategory === "decision" && s.score < 7)
+            .map((s) => s.reasoning);
+
+          const question = decisionFailures.join("; ") || decisionScores.join("; ") || "Unspecified decision needed — the evaluator found an issue that requires human judgement";
+
+          const decision: DecisionRequest = {
+            question,
+            context: lastEvalResult.feedback.slice(0, 1000),
+            options: [],
+            sprint: sprint.id,
+            attempt,
+            timestamp: new Date().toISOString(),
+          };
+
+          writeDecisionRequired(stateDir, decision);
+          notifyHuman(decision);
+
+          state.phase = "awaiting_decision";
+          saveState(stateDir, state);
+          writeProgress(config, state);
+          buildLog.logPipelineComplete("awaiting_decision", Date.now() - startTime, costLedger.totalCostUsd);
+          buildLog.flush();
+
+          return {
+            prdPath,
+            status: "awaiting_decision",
+            sprints: sprintResults,
+            totalCostUsd: costLedger.totalCostUsd,
+            totalDurationMs: Date.now() - startTime,
+            expertiseFilesUpdated: [],
+          };
+        }
+
         // PLAN failures → amend the plan before generator retries
         if (categories.hasPlan && !planAmended) {
           log("ROUTE", "PLAN failures detected → amending plan before retry...");
@@ -242,21 +322,75 @@ export async function runPipeline(
           planAmended = true;
         }
 
-        // INFRA failures → prepend setup instructions to the feedback
+        // INFRA failures → re-check environment + specific setup instructions + MCP docs
         if (categories.hasInfra) {
-          log("ROUTE", "INFRA failures detected → adding setup instructions to feedback...");
-          const infraNote = [
-            `\n## INFRASTRUCTURE SETUP REQUIRED\n`,
-            `The evaluator found that the project environment is not set up.`,
-            `BEFORE fixing any code issues, you MUST:`,
-            `1. Create a .env file with required environment variables (DATABASE_URL, PAYLOAD_SECRET, etc.)`,
-            `2. Run \`pnpm install\` to install all dependencies`,
-            `3. Verify the dev server starts with \`pnpm dev\``,
-            `4. If a database is needed, set up the connection and run migrations`,
-            `\nDo this FIRST, then address the code issues.\n`,
-          ].join("\n");
+          log("ROUTE", "INFRA failures detected → re-running preflight + adding specific instructions...");
 
-          // Append infra note to the feedback file
+          // Re-run preflight to get CURRENT state (something may have changed since last attempt)
+          const currentEnv = runPreflight(resolve(config.target.dir));
+          writeJsonFile(resolve(stateDir, "environment.json"), currentEnv);
+
+          const infraParts: string[] = [
+            `\n## INFRASTRUCTURE SETUP REQUIRED\n`,
+            `The evaluator found infrastructure problems. Here is the CURRENT environment state:\n`,
+            formatPreflightForPrompt(currentEnv),
+            ``,
+            `BEFORE fixing any code issues, you MUST address each MISSING item above.`,
+            ``,
+          ];
+
+          if (!currentEnv.envFile.exists) {
+            infraParts.push(
+              `### .env File Setup`,
+              `Create ${resolve(config.target.dir, ".env")} with:`,
+              `\`\`\``,
+              `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres`,
+              `PAYLOAD_SECRET=dev-secret-change-in-production`,
+              `SUPABASE_URL=http://127.0.0.1:54321`,
+              `SUPABASE_SERVICE_KEY=<get from: supabase status --output json>`,
+              `\`\`\``,
+              ``,
+            );
+          }
+
+          if (!currentEnv.database.dockerRunning.available) {
+            infraParts.push(
+              `### Docker Required`,
+              `Docker must be installed and running for Supabase local dev.`,
+              `Use Context7 MCP to fetch the official Supabase local development documentation.`,
+              ``,
+            );
+          }
+
+          if (!currentEnv.database.supabaseCli.available) {
+            infraParts.push(
+              `### Supabase CLI Required`,
+              `Install: brew install supabase/tap/supabase (or npm i -g supabase)`,
+              `Then: supabase init && supabase start`,
+              `Use Context7 MCP to fetch official Supabase CLI documentation.`,
+              ``,
+            );
+          }
+
+          if (!currentEnv.database.postgres.available && currentEnv.database.supabaseCli.available) {
+            infraParts.push(
+              `### Database Not Running`,
+              `Supabase CLI is installed but PostgreSQL is not running on port 54322.`,
+              `Run: supabase start (requires Docker to be running first)`,
+              ``,
+            );
+          }
+
+          infraParts.push(
+            `### Documentation Access`,
+            `If you need official documentation for any technology:`,
+            `1. Use the Context7 MCP server to fetch docs (preferred — fast, structured)`,
+            `2. If Context7 doesn't have it, use the agent-browser MCP to find official docs`,
+            ``,
+            `After setup, verify with: pnpm dev (should start without 500 errors)`,
+          );
+
+          const infraNote = infraParts.join("\n");
           const existingFeedback = lastEvalResult;
           existingFeedback.feedback = infraNote + "\n" + existingFeedback.feedback;
           writeJsonFile(feedbackFilePath, existingFeedback);
@@ -336,6 +470,7 @@ export async function runPipeline(
           cats.hasCode ? "CODE" : null,
           cats.hasPlan ? "PLAN" : null,
           cats.hasInfra ? "INFRA" : null,
+          cats.hasDecision ? "DECISION" : null,
         ].filter(Boolean).join(" + ");
         log("EVAL", `Failure types: ${catSummary || "uncategorised"}`);
 
@@ -491,17 +626,19 @@ function log(phase: string, message: string): void {
 }
 
 /**
- * Categorise eval failures into CODE, PLAN, INFRA.
+ * Categorise eval failures into CODE, PLAN, INFRA, DECISION.
  * Uses explicit categories from evaluator output, with heuristic fallback.
  */
 function categoriseFailures(evalResult: EvalResult): {
   hasCode: boolean;
   hasPlan: boolean;
   hasInfra: boolean;
+  hasDecision: boolean;
 } {
   let hasCode = false;
   let hasPlan = false;
   let hasInfra = false;
+  let hasDecision = false;
 
   // Strategy 1: Use explicit categories from evaluator (Codex schema or structured markdown)
   if (evalResult.failureCategories && evalResult.failureCategories.length > 0) {
@@ -509,8 +646,9 @@ function categoriseFailures(evalResult: EvalResult): {
       if (cat.category === "code") hasCode = true;
       if (cat.category === "plan") hasPlan = true;
       if (cat.category === "infra") hasInfra = true;
+      if (cat.category === "decision") hasDecision = true;
     }
-    return { hasCode, hasPlan, hasInfra };
+    return { hasCode, hasPlan, hasInfra, hasDecision };
   }
 
   // Strategy 2: Use per-score categories
@@ -519,12 +657,16 @@ function categoriseFailures(evalResult: EvalResult): {
     if (score.failureCategory === "code") hasCode = true;
     else if (score.failureCategory === "plan") hasPlan = true;
     else if (score.failureCategory === "infra") hasInfra = true;
+    else if (score.failureCategory === "decision") hasDecision = true;
   }
-  if (hasCode || hasPlan || hasInfra) return { hasCode, hasPlan, hasInfra };
+  if (hasCode || hasPlan || hasInfra || hasDecision) return { hasCode, hasPlan, hasInfra, hasDecision };
 
   // Strategy 3: Heuristic — scan feedback text for keywords
   const text = (evalResult.feedback + " " + evalResult.failureReasons.join(" ")).toLowerCase();
 
+  const decisionKeywords = ["unclear which", "not specified", "ambiguous", "could be either",
+    "no configuration for", "which database", "which provider", "human must decide",
+    "requires a choice", "not determined", "which auth", "which api version"];
   const infraKeywords = [".env", "database", "connection", "environment", "dependencies not installed",
     "pnpm install", "npm install", "no such file", "econnrefused", "500", "server error",
     "database_url", "missing env", "not configured", "not running"];
@@ -532,6 +674,9 @@ function categoriseFailures(evalResult: EvalResult): {
     "no api route", "directory does not exist", "file not found", "missing step",
     "incomplete", "not implemented", "was not created"];
 
+  for (const kw of decisionKeywords) {
+    if (text.includes(kw)) { hasDecision = true; break; }
+  }
   for (const kw of infraKeywords) {
     if (text.includes(kw)) { hasInfra = true; break; }
   }
@@ -540,7 +685,7 @@ function categoriseFailures(evalResult: EvalResult): {
   }
 
   // Default: if nothing matched, assume code issue
-  if (!hasInfra && !hasPlan) hasCode = true;
+  if (!hasInfra && !hasPlan && !hasDecision) hasCode = true;
 
-  return { hasCode, hasPlan, hasInfra };
+  return { hasCode, hasPlan, hasInfra, hasDecision };
 }

@@ -129,7 +129,7 @@ function parseStructuredMarkdown(
     const scoreNum = extractScoreFromText(scoreStr) || extractScoreFromText(block.slice(0, 200));
 
     const category = getValue("category").toLowerCase();
-    const failureCategory = (["code", "plan", "infra"].includes(category) ? category : scoreNum >= 7 ? "pass" : "code") as "code" | "plan" | "infra" | "pass";
+    const failureCategory = (["code", "plan", "infra", "decision"].includes(category) ? category : scoreNum >= 7 ? "pass" : "code") as "code" | "plan" | "infra" | "decision" | "pass";
 
     scores.push({
       criterionId: id,
@@ -173,7 +173,7 @@ function parseStructuredMarkdown(
     : scores.filter((s) => s.score < threshold).map((s) => `[${s.criterionId}] ${s.reasoning}`);
 
   // Build categorised failures from scores
-  const failureCategories: Array<{ category: "code" | "plan" | "infra"; description: string; criterionIds: string[] }> = [];
+  const failureCategories: Array<{ category: "code" | "plan" | "infra" | "decision"; description: string; criterionIds: string[] }> = [];
   const categoryMap = new Map<string, { description: string[]; criterionIds: string[] }>();
 
   for (const s of scores) {
@@ -190,7 +190,7 @@ function parseStructuredMarkdown(
 
   for (const [category, data] of categoryMap) {
     failureCategories.push({
-      category: category as "code" | "plan" | "infra",
+      category: category as "code" | "plan" | "infra" | "decision",
       description: data.description.join("; "),
       criterionIds: data.criterionIds,
     });

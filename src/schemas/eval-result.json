@@ -45,7 +45,7 @@
           },
           "failureCategory": {
             "type": "string",
-            "enum": ["code", "plan", "infra", "pass"],
+            "enum": ["code", "plan", "infra", "decision", "pass"],
             "description": "code=generator can fix, plan=planner needs to amend, infra=environment setup needed, pass=no failure"
           }
         }
@@ -70,8 +70,8 @@
         "properties": {
           "category": {
             "type": "string",
-            "enum": ["code", "plan", "infra"],
-            "description": "code=generator fix, plan=planner amend, infra=environment setup"
+            "enum": ["code", "plan", "infra", "decision"],
+            "description": "code=generator fix, plan=planner amend, infra=environment setup, decision=human must decide"
           },
           "description": {
             "type": "string",

@@ -24,7 +24,7 @@ models:
   improver: "claude-sonnet-4-20250514"
 
 pipeline:
-  max_retries: 3
+  max_retries: 7
   max_scouts: 3
   contract_rounds: 2
   eval_pass_threshold: 7.0
@@ -50,6 +50,14 @@ tracking:
   commit_prefix: "shipwright:"
 
 limits:
-  max_cost_per_sprint: 10.00
-  max_cost_per_build: 50.00
   max_tokens_per_agent_call: 200000
+  enforce: false  # Subscription pricing — track but don't gate
+
+# MCP servers — available to Claude agents for documentation and browser access
+mcp_servers:
+  context7:
+    command: "npx"
+    args: ["-y", "@upstash/context7-mcp"]
+  agent-browser:
+    command: "npx"
+    args: ["-y", "@anthropic-ai/agent-browser"]

@@ -49,6 +49,7 @@ export async function runScouts(
         model: config.models.scout,
         maxTurns: 15,
         workingDir: dir.targetDir,
+        mcpServers: config.mcpServers,
       });
 
       const findings = extractJson<ScoutReport["findings"]>(

@@ -21,6 +21,7 @@ For EACH failure you find, categorise it:
 - **code** — TypeScript errors, logic bugs, missing imports, wrong types, broken functions. The GENERATOR can fix these by editing code.
 - **plan** — Missing files that should exist, wrong directory structure, missing steps in the build, incomplete scope. The PLANNER needs to amend the plan.
 - **infra** — Missing .env file, no database connection, dependencies not installed, dev server not started, missing environment setup. The GENERATOR needs explicit setup instructions.
+- **decision** — The implementation requires a choice NOT specified in the PRD or plan (which database provider, which auth strategy, which API version, which hosting platform). The HUMAN must decide. Use this when you cannot determine the correct approach from available context.
 
 This categorisation is CRITICAL. It determines who fixes the issue. Get it right.
 
@@ -74,6 +75,13 @@ After your investigation, output your scores using this structured markdown:
 - failures: src/app/api/content-pieces/ does not exist
 - category: plan
 
+### SCORE: ac-004
+- criterion: Database adapter is configured
+- score: 1/10
+- reasoning: PRD does not specify which database to use — Supabase, raw Postgres, or SQLite
+- failures: No database configuration found, unclear which provider is intended
+- category: decision
+
 ### FAILURE CATEGORIES
 - code: TypeScript compilation errors (ac-001)
 - infra: No database or .env configured (ac-002)
@@ -84,5 +92,5 @@ Detailed feedback explaining what to fix...
 ```
 
 You MUST include one SCORE section for EACH acceptance criterion.
-You MUST include a `category` line for each score below 7 (code, plan, or infra).
+You MUST include a `category` line for each score below 7 (code, plan, infra, or decision).
 You MUST include a FAILURE CATEGORIES section summarising by type.
