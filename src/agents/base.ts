@@ -196,7 +196,7 @@ async function runCodexAgent(options: AgentOptions): Promise<AgentResult> {
 
     const codex = new Codex();
     const thread = codex.startThread({
-      sandboxMode: "full-auto",
+      sandboxMode: "danger-full-access",
       workingDirectory: resolve(options.workingDir ?? process.cwd()),
       skipGitRepoCheck: true,
       approvalPolicy: "never",
