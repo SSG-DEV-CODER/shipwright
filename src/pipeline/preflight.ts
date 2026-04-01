@@ -141,6 +141,59 @@ export function runPreflight(
   };
 }
 
+/**
+ * Auto-fix recoverable environment issues before the build starts.
+ * Starts Docker if installed but not running, starts Supabase if CLI available but DB not running.
+ */
+export function autoFix(report: EnvironmentReport): string[] {
+  const actions: string[] = [];
+
+  // Start Docker if installed but not running
+  if (report.database.docker.available && !report.database.dockerRunning.available) {
+    try {
+      execSync('open -a Docker', { stdio: "pipe", timeout: 5000 });
+      actions.push("Started Docker (open -a Docker)");
+
+      // Wait for Docker daemon to be ready (up to 30 seconds)
+      for (let i = 0; i < 6; i++) {
+        try {
+          execSync("docker info --format '{{.ServerVersion}}'", { stdio: "pipe", timeout: 10000 });
+          actions.push("Docker daemon ready");
+          break;
+        } catch {
+          if (i < 5) execSync("sleep 5", { stdio: "pipe" });
+        }
+      }
+    } catch {
+      actions.push("Failed to start Docker — start it manually");
+    }
+  }
+
+  // Start Supabase if CLI available, Docker running, but Postgres not accessible
+  if (
+    report.database.supabaseCli.available &&
+    !report.database.postgres.available
+  ) {
+    // Check Docker is running first (may have just started above)
+    const dockerNow = checkCommand("docker info --format '{{.ServerVersion}}'");
+    if (dockerNow.available) {
+      try {
+        execSync("supabase start", {
+          stdio: "pipe",
+          timeout: 120000, // Supabase start can take 2 minutes
+          cwd: report.targetDir,
+        });
+        actions.push("Started Supabase (supabase start)");
+      } catch {
+        // May fail if not initialized — that's okay, generator will handle it
+        actions.push("supabase start failed — generator will initialize");
+      }
+    }
+  }
+
+  return actions;
+}
+
 export function formatPreflightOneLiner(report: EnvironmentReport): string {
   const parts: string[] = [];
 

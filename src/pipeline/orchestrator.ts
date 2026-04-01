@@ -28,7 +28,7 @@ import { BuildLog } from "../tracking/log.js";
 import { gitCommit, isGitRepo, gitInit } from "../tracking/git.js";
 import { writeJsonFile, writeText, ensureDir, readText, fileExists } from "../lib/fs.js";
 import { CostLedger } from "../lib/cost.js";
-import { runPreflight, formatPreflightForPrompt, formatPreflightOneLiner } from "./preflight.js";
+import { runPreflight, formatPreflightForPrompt, formatPreflightOneLiner, autoFix } from "./preflight.js";
 import { writeDecisionRequired, notifyHuman, readDecisionAnswer } from "./decisions.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { DecisionRequest } from "./types.js";
@@ -132,9 +132,24 @@ export async function runPipeline(
 
   // --- Phase: PRE-FLIGHT ---
   log("PREFLIGHT", "Running environment discovery...");
-  const preflightReport = runPreflight(resolve(config.target.dir));
-  writeJsonFile(resolve(stateDir, "environment.json"), preflightReport);
+  let preflightReport = runPreflight(resolve(config.target.dir));
   log("PREFLIGHT", formatPreflightOneLiner(preflightReport));
+
+  // Auto-fix recoverable issues (start Docker, start Supabase)
+  if (!preflightReport.database.dockerRunning.available || !preflightReport.database.postgres.available) {
+    log("PREFLIGHT", "Attempting auto-fix for missing services...");
+    const fixes = autoFix(preflightReport);
+    for (const fix of fixes) {
+      log("PREFLIGHT", `  → ${fix}`);
+    }
+    // Re-run preflight to get updated state
+    if (fixes.length > 0) {
+      preflightReport = runPreflight(resolve(config.target.dir));
+      log("PREFLIGHT", formatPreflightOneLiner(preflightReport));
+    }
+  }
+
+  writeJsonFile(resolve(stateDir, "environment.json"), preflightReport);
   const preflightText = formatPreflightForPrompt(preflightReport);
 
   // Initialize state
@@ -260,6 +275,34 @@ export async function runPipeline(
       let feedbackFilePath: string | undefined;
       if (lastEvalResult) {
         feedbackFilePath = resolve(sprintDir, `feedback-attempt-${attempt - 1}.json`);
+
+        // Build incremental retry header — tell generator what passes and what fails
+        const passingCriteria = lastEvalResult.scores.filter((s) => s.score >= 7);
+        const failingCriteria = lastEvalResult.scores.filter((s) => s.score < 7);
+
+        if (passingCriteria.length > 0) {
+          const preserveSection = [
+            `\n## PASSING CRITERIA — DO NOT TOUCH\n`,
+            `These criteria already pass. Do NOT modify files related to them:\n`,
+            ...passingCriteria.map((s) => `- ✓ ${s.criterionId}: ${s.score}/10 — ${s.criterion}`),
+            ``,
+          ].join("\n");
+
+          const fixSection = [
+            `## FAILING CRITERIA — FIX THESE ONLY\n`,
+            `Focus exclusively on these failing criteria:\n`,
+            ...failingCriteria.map((s) => {
+              const cat = s.failureCategory ? ` [${s.failureCategory}]` : "";
+              const details = s.reasoning ? `\n  → ${s.reasoning}` : "";
+              const failures = (s.specificFailures ?? []).map((f) => `\n  → ${f}`).join("");
+              return `- ✗ ${s.criterionId}: ${s.score}/10${cat} — ${s.criterion}${details}${failures}`;
+            }),
+            ``,
+          ].join("\n");
+
+          lastEvalResult.feedback = preserveSection + fixSection + "\n" + lastEvalResult.feedback;
+        }
+
         writeJsonFile(feedbackFilePath, lastEvalResult);
 
         const categories = categoriseFailures(lastEvalResult);
@@ -712,30 +755,44 @@ function categoriseFailures(evalResult: EvalResult): {
   if (hasCode || hasPlan || hasInfra || hasDecision) return { hasCode, hasPlan, hasInfra, hasDecision };
 
   // Strategy 3: Heuristic — scan feedback text for keywords
+  // CODE keywords are checked first and take priority when mixed with INFRA keywords.
+  // This prevents "type-check failed → server returned 500" from being classified as INFRA
+  // when the root cause is a TypeScript error.
   const text = (evalResult.feedback + " " + evalResult.failureReasons.join(" ")).toLowerCase();
 
+  const codeKeywords = ["type error", "type-check", "cannot find module", "is not assignable",
+    "property does not exist", "typescript", "tsc", "compilation error", "syntax error",
+    "import error", "not assignable to type", "does not exist on type", "expected",
+    "unexpected token", "cannot find name"];
   const decisionKeywords = ["unclear which", "not specified", "ambiguous", "could be either",
     "no configuration for", "which database", "which provider", "human must decide",
     "requires a choice", "not determined", "which auth", "which api version"];
-  const infraKeywords = [".env", "database", "connection", "environment", "dependencies not installed",
-    "pnpm install", "npm install", "no such file", "econnrefused", "500", "server error",
-    "database_url", "missing env", "not configured", "not running"];
+  const infraKeywords = [".env", "database_url", "missing env", "dependencies not installed",
+    "pnpm install", "npm install", "econnrefused", "not configured", "not running",
+    "docker", "supabase", "no database"];
   const planKeywords = ["missing from plan", "not in plan", "should have been created",
     "no api route", "directory does not exist", "file not found", "missing step",
     "incomplete", "not implemented", "was not created"];
 
+  // Check CODE first — if code errors exist, they're likely the root cause of 500s
+  for (const kw of codeKeywords) {
+    if (text.includes(kw)) { hasCode = true; break; }
+  }
   for (const kw of decisionKeywords) {
     if (text.includes(kw)) { hasDecision = true; break; }
   }
-  for (const kw of infraKeywords) {
-    if (text.includes(kw)) { hasInfra = true; break; }
+  // Only check INFRA if no code errors found — prevents "500" from overriding type errors
+  if (!hasCode) {
+    for (const kw of infraKeywords) {
+      if (text.includes(kw)) { hasInfra = true; break; }
+    }
   }
   for (const kw of planKeywords) {
     if (text.includes(kw)) { hasPlan = true; break; }
   }
 
   // Default: if nothing matched, assume code issue
-  if (!hasInfra && !hasPlan && !hasDecision) hasCode = true;
+  if (!hasInfra && !hasPlan && !hasDecision && !hasCode) hasCode = true;
 
   return { hasCode, hasPlan, hasInfra, hasDecision };
 }

@@ -43,9 +43,18 @@ Read the PRD. For EVERY technology, library, framework, and tool mentioned:
 
 ## Severity Levels
 
-- **CRITICAL** — Will definitely fail. The build cannot succeed with this instruction. Example: hand-writing SQL for tables an ORM manages internally.
-- **WARNING** — Likely to cause problems. May work but is fragile or wrong. Example: using a deprecated API that might be removed.
-- **INFO** — Best practice suggestion. Won't break but could be better. Example: using a newer pattern that's simpler.
+- **CRITICAL** — Will definitely fail. The build CANNOT succeed with this instruction. You MUST cite the exact vendor documentation that proves it will fail. If you cannot cite a specific source, it is NOT critical.
+  - Example CRITICAL: "PRD says push:false for a fresh install. Payload docs state: 'push:false requires existing tables' (source: payloadcms.com/docs/database)" — this WILL fail.
+  - NOT CRITICAL: "Array syntax vs object syntax for PostCSS" — both work, this is a style preference.
+  - NOT CRITICAL: "Version X is available but PRD uses version Y" — unless Y doesn't exist or is incompatible, this is WARNING.
+- **WARNING** — Likely to cause problems. May work but is fragile or wrong. Use for: version recommendations, missing documentation details, deprecated patterns, alternative approaches.
+- **INFO** — Best practice suggestion. Won't break but could be better.
+
+### Severity Rules
+- If two valid approaches exist (e.g., array vs object config), it is INFO at most — never CRITICAL.
+- Version recommendations are WARNING unless the specified version literally does not exist.
+- Missing documentation details (e.g., "should mention Node.js version") are WARNING, not CRITICAL.
+- Inconsistency within the PRD (e.g., Step 1 says X but Step 9 says Y) is CRITICAL only if it causes a conflict.
 
 ## Output Format
 
