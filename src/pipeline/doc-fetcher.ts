@@ -49,6 +49,23 @@ function isCacheValid(docsDir: string, technology: string): boolean {
   }
 }
 
+/** Check if a tech was already attempted but yielded no docs (known failure — don't retry within cache window) */
+function isPreviouslyFailed(docsDir: string, technology: string): boolean {
+  const techDir = resolve(docsDir, techSlug(technology));
+  if (!existsSync(techDir)) return false;
+
+  try {
+    const stat = statSync(techDir);
+    if (Date.now() - stat.mtimeMs > CACHE_MAX_AGE_MS) return false;
+
+    // Dir exists within cache window but has no .md files — was attempted, found nothing
+    const files = readdirSync(techDir).filter((f) => f.endsWith(".md"));
+    return files.length === 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchVendorDocs(
   config: ShipwrightConfig,
   technologies: string[],
@@ -63,6 +80,9 @@ export async function fetchVendorDocs(
 
   for (const tech of technologies) {
     if (isCacheValid(docsDir, tech)) {
+      cached.push(tech);
+    } else if (isPreviouslyFailed(docsDir, tech)) {
+      // Already tried, no docs found — don't waste time re-fetching
       cached.push(tech);
     } else {
       toFetch.push(tech);
