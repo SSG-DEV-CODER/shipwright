@@ -35,6 +35,8 @@ expertise:
   auto_improve: true
   max_lines: 1000
 
+vendor_docs_dir: "/Users/maffy/Developer/shipwright/vendor-docs"
+
 # Reference codebases — scouts explore these for patterns (read-only)
 # NOTE: Hub (798 files) removed — too large, causes SDK to hang.
 # Hub patterns are captured in the nextjs-payload expertise file instead.

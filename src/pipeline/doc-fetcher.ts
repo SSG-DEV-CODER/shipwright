@@ -52,10 +52,10 @@ function isCacheValid(docsDir: string, technology: string): boolean {
 export async function fetchVendorDocs(
   config: ShipwrightConfig,
   technologies: string[],
-  targetDir: string,
+  _targetDir: string,
 ): Promise<DocFetchResult> {
   const start = Date.now();
-  const docsDir = resolve(targetDir, ".shipwright", "vendor-docs");
+  const docsDir = resolve(config.vendorDocsDir);
   ensureDir(docsDir);
 
   const cached: string[] = [];

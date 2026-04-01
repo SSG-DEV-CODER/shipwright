@@ -46,6 +46,8 @@ export interface ShipwrightConfig {
     maxLines: number;
   };
 
+  vendorDocsDir: string;
+
   references: Array<{
     path: string;
     label: string;
@@ -100,6 +102,8 @@ const DEFAULT_CONFIG: ShipwrightConfig = {
     autoImprove: true,
     maxLines: 1000,
   },
+
+  vendorDocsDir: "./vendor-docs",
 
   references: [],
 
@@ -159,6 +163,9 @@ function mergeConfig(
     if (e.dir !== undefined) config.expertise.dir = e.dir as string;
     if (e.auto_improve !== undefined) config.expertise.autoImprove = e.auto_improve as boolean;
     if (e.max_lines !== undefined) config.expertise.maxLines = e.max_lines as number;
+  }
+  if (overrides.vendor_docs_dir) {
+    config.vendorDocsDir = overrides.vendor_docs_dir as string;
   }
   if (Array.isArray(overrides.references)) {
     config.references = overrides.references as Array<{ path: string; label: string }>;
