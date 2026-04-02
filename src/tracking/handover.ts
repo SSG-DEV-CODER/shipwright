@@ -89,6 +89,23 @@ export function generateHandover(
     }
   }
 
+  // --- Tailscale / Network Access ---
+  lines.push(`## Network Access (Tailscale)`);
+  lines.push(``);
+  const templateConfig = extractTemplateConfig(targetDir);
+  if (templateConfig.domain) {
+    lines.push(`| Service | URL |`);
+    lines.push(`|---------|-----|`);
+    lines.push(`| Production site | https://${templateConfig.domain} |`);
+    lines.push(`| Payload admin (prod) | https://${templateConfig.domain}/admin |`);
+    if (templateConfig.hubUrl) lines.push(`| Hub API | ${templateConfig.hubUrl} |`);
+    if (templateConfig.botApiUrl) lines.push(`| Bot API | ${templateConfig.botApiUrl} |`);
+    lines.push(``);
+  } else {
+    lines.push(`> Tailscale / production URLs not configured. Set \`domain\` in \`src/template.config.ts\` when deploying.`);
+    lines.push(``);
+  }
+
   // --- Commands ---
   lines.push(`## Commands`);
   lines.push(``);
@@ -100,6 +117,7 @@ export function generateHandover(
   lines.push(`| \`supabase start\` | Start local Supabase |`);
   lines.push(`| \`supabase stop\` | Stop local Supabase |`);
   lines.push(`| \`supabase db reset\` | Reset database (reapply migrations + seed) |`);
+  lines.push(`| \`pnpm payload migrate:create <name>\` | Create a new migration |`);
   lines.push(``);
 
   // --- Directory Structure ---
@@ -134,6 +152,49 @@ export function generateHandover(
     }
     lines.push(``);
   }
+
+  // --- Orientation Guide ---
+  lines.push(`## Orientation Guide`);
+  lines.push(``);
+  lines.push(`### How to start developing`);
+  lines.push(`1. \`supabase start\` — start the local database`);
+  lines.push(`2. \`pnpm dev\` — start the dev server at http://localhost:${port}`);
+  lines.push(`3. Open http://localhost:${port}/admin to access Payload admin`);
+  lines.push(`4. Create a first admin user when prompted`);
+  lines.push(``);
+
+  lines.push(`### How to add a new page`);
+  lines.push(`Create a new file at \`src/app/(site)/your-page/page.tsx\`. The route group \`(site)\` uses the public layout. For dashboard pages, use \`(content)\`, \`(social)\`, or \`(analytics)\` route groups.`);
+  lines.push(``);
+
+  lines.push(`### How to add a new API route`);
+  lines.push(`Create \`src/app/api/your-endpoint/route.ts\` with exported GET/POST/PATCH/DELETE handlers. Add \`export const dynamic = 'force-dynamic'\` for data routes.`);
+  lines.push(``);
+
+  lines.push(`### How to add a new Payload collection`);
+  lines.push(`1. Create \`src/collections/YourCollection.ts\` following the existing collection patterns`);
+  lines.push(`2. Register it in \`src/payload.config.ts\` under the \`collections\` array`);
+  lines.push(`3. Run \`pnpm dev\` — Payload auto-creates the database table (push: true)`);
+  lines.push(`4. Run \`pnpm payload migrate:create add-your-collection\` to capture the schema change`);
+  lines.push(``);
+
+  lines.push(`### How to add a new social connector`);
+  lines.push(`1. Create \`src/lib/social-connectors/your-platform.ts\` implementing the \`ConnectorAdapter\` interface`);
+  lines.push(`2. Register in \`src/lib/social-connectors/index.ts\` via \`getConnector()\` factory`);
+  lines.push(`3. Add go-live gates for the new platform in the database`);
+  lines.push(``);
+
+  // Config file reference
+  lines.push(`### Key configuration files`);
+  lines.push(`| File | Purpose |`);
+  lines.push(`|------|---------|`);
+  lines.push(`| \`src/payload.config.ts\` | Payload CMS config — collections, database, admin |`);
+  lines.push(`| \`src/template.config.ts\` | Site identity — id, name, domain, port, feature flags |`);
+  lines.push(`| \`next.config.ts\` | Next.js config — Payload wrapper, rewrites |`);
+  lines.push(`| \`.env\` | Environment variables — database, secrets |`);
+  lines.push(`| \`agents.yaml\` | Agent definitions with \${site} variable substitution |`);
+  lines.push(`| \`quality-gates.yaml\` | Quality thresholds — Lighthouse, bundle size, security |`);
+  lines.push(``);
 
   // --- Build Summary ---
   lines.push(`## Build Summary`);
@@ -207,6 +268,24 @@ function extractPort(targetDir: string): number {
     }
   } catch {}
   return 9020;
+}
+
+function extractTemplateConfig(targetDir: string): { domain?: string; hubUrl?: string; botApiUrl?: string } {
+  try {
+    const configPath = resolve(targetDir, "src/template.config.ts");
+    if (existsSync(configPath)) {
+      const content = readText(configPath);
+      const domainMatch = content.match(/domain:\s*['"]([^'"]+)['"]/);
+      const hubMatch = content.match(/hub(?:Url|_url):\s*['"]([^'"]+)['"]/);
+      const botMatch = content.match(/bot(?:Api|_api)(?:Url|_url):\s*['"]([^'"]+)['"]/);
+      return {
+        domain: domainMatch?.[1],
+        hubUrl: hubMatch?.[1],
+        botApiUrl: botMatch?.[1],
+      };
+    }
+  } catch {}
+  return {};
 }
 
 function extractEnvVars(targetDir: string): Record<string, string> {
