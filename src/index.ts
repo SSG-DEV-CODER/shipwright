@@ -149,7 +149,7 @@ async function runExpertise(args: ParsedArgs): Promise<void> {
       const { runImprover } = await import("./agents/improver.js");
       const { applyExpertiseUpdate } = await import("./expertise/updater.js");
       const { resolve: resolvePath } = await import("path");
-      const impResult = await runImprover(config, { sprintId: "manual", title: "Manual improve", acceptanceCriteria: [], implementation: { steps: [], filesToCreate: [], filesToModify: [], validationCommands: [] }, evaluationCriteria: [], negotiationRounds: [] }, [], `Domain: ${impDomain}`);
+      const { update: impResult } = await runImprover(config, { sprintId: "manual", title: "Manual improve", acceptanceCriteria: [], implementation: { steps: [], filesToCreate: [], filesToModify: [], validationCommands: [] }, evaluationCriteria: [], negotiationRounds: [] }, [], `Domain: ${impDomain}`);
       const expPath = resolvePath(config.expertise.dir, `${impDomain}.yaml`);
       const { changesApplied } = applyExpertiseUpdate(expPath, impResult, config.expertise.maxLines);
       console.log(`Applied ${changesApplied.length} changes to ${impDomain}.yaml`);

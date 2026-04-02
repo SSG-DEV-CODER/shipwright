@@ -11,7 +11,7 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
+import { runAgent, AGENT_TOOLS, type AgentRole, type AgentResult } from "./base.js";
 import type { ShipwrightConfig } from "../config.js";
 
 const GENERATOR_ROLE: AgentRole = "generator";
@@ -22,13 +22,13 @@ const GENERATOR_ROLE: AgentRole = "generator";
  * @param planFilePath — path to the sprint plan file (markdown)
  * @param feedbackFilePath — optional path to evaluation feedback file (retry)
  *
- * Returns raw text output (not parsed — harness uses git diff instead).
+ * Returns AgentResult with output text and cost entry for token tracking.
  */
 export async function runGenerator(
   config: ShipwrightConfig,
   planFilePath: string,
   feedbackFilePath?: string
-): Promise<string> {
+): Promise<AgentResult> {
   const systemPrompt = loadPromptFile("generator.md");
 
   const parts: string[] = [
@@ -62,7 +62,7 @@ export async function runGenerator(
     persistSession: true,
   });
 
-  return result.output;
+  return result;
 }
 
 function loadPromptFile(filename: string): string {

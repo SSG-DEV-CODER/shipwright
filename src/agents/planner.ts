@@ -7,7 +7,7 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
+import { runAgent, AGENT_TOOLS, type AgentRole, type AgentResult } from "./base.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { SprintPlan } from "../intake/types.js";
 
@@ -15,7 +15,7 @@ const PLANNER_ROLE: AgentRole = "planner";
 
 /**
  * Run the planner agent. It writes a plan file to planFilePath.
- * Returns the raw output text (the plan is on disk, not in the return value).
+ * Returns AgentResult with output text and cost entry for token tracking.
  */
 export async function runPlanner(
   config: ShipwrightConfig,
@@ -24,7 +24,7 @@ export async function runPlanner(
   prdFilePath: string,
   scoutReports: string,
   expertiseContext: string
-): Promise<string> {
+): Promise<AgentResult> {
   const systemPrompt = loadPromptFile("planner.md");
 
   const parts: string[] = [
@@ -80,7 +80,7 @@ export async function runPlanner(
     workingDir: config.target.dir,
   });
 
-  return result.output;
+  return result;
 }
 
 function loadPromptFile(filename: string): string {

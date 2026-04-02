@@ -7,10 +7,11 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
+import { runAgent, AGENT_TOOLS, type AgentRole, type AgentResult } from "./base.js";
 import { extractJson } from "../lib/json-extract.js";
 import { extractEvalFromText } from "../lib/text-to-eval.js";
 import type { ShipwrightConfig } from "../config.js";
+import type { CostEntry } from "../lib/cost.js";
 import type { SprintContract, EvalResult } from "../pipeline/types.js";
 
 const EVALUATOR_ROLE: AgentRole = "evaluator";
@@ -19,7 +20,7 @@ export async function runEvaluator(
   config: ShipwrightConfig,
   contract: SprintContract,
   filesChanged: string[]
-): Promise<EvalResult> {
+): Promise<{ evalResult: EvalResult; costEntry: CostEntry }> {
   const systemPrompt = loadPromptFile("evaluator.md");
 
   const parts: string[] = [
@@ -95,7 +96,7 @@ export async function runEvaluator(
   );
 
   if (jsonResult && Array.isArray(jsonResult.scores) && jsonResult.scores.length > 0) {
-    return coerceEvalResult(jsonResult, rawOutput, config.pipeline.evalPassThreshold);
+    return { evalResult: coerceEvalResult(jsonResult, rawOutput, config.pipeline.evalPassThreshold), costEntry: result.costEntry };
   }
 
   // Strategy 2: Text-to-eval extraction
@@ -107,12 +108,12 @@ export async function runEvaluator(
 
   if (textResult && textResult.scores.some((s) => s.score > 0)) {
     console.warn("[evaluator] Using text-extracted evaluation (no clean JSON found)");
-    return textResult;
+    return { evalResult: textResult, costEntry: result.costEntry };
   }
 
   // Strategy 3: Fallback defaults with raw feedback
   console.warn("[evaluator] Could not extract evaluation from agent output. Using defaults.");
-  return buildDefaultEvalResult(contract, rawOutput);
+  return { evalResult: buildDefaultEvalResult(contract, rawOutput), costEntry: result.costEntry };
 }
 
 function coerceEvalResult(raw: EvalResult, rawText: string, threshold: number): EvalResult {

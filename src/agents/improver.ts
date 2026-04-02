@@ -4,10 +4,11 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { runAgent, AGENT_TOOLS, type AgentRole } from "./base.js";
+import { runAgent, AGENT_TOOLS, type AgentRole, type AgentResult } from "./base.js";
 import { extractJson } from "../lib/json-extract.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { SprintContract, BuildAttempt } from "../pipeline/types.js";
+import type { CostEntry } from "../lib/cost.js";
 import type { ExpertiseUpdate } from "../expertise/types.js";
 
 const IMPROVER_ROLE: AgentRole = "improver";
@@ -17,7 +18,7 @@ export async function runImprover(
   contract: SprintContract,
   attempts: BuildAttempt[],
   existingExpertiseSummary: string
-): Promise<ExpertiseUpdate> {
+): Promise<{ update: ExpertiseUpdate; costEntry: CostEntry }> {
   const systemPrompt = loadPromptFile("improver.md");
 
   const parts: string[] = [
@@ -64,7 +65,7 @@ export async function runImprover(
     workingDir: config.target.dir,
   });
 
-  return extractJson<ExpertiseUpdate>(
+  const update = extractJson<ExpertiseUpdate>(
     result.output,
     ["domain", "newPatterns"],
     {
@@ -76,6 +77,8 @@ export async function runImprover(
       removals: [],
     }
   );
+
+  return { update, costEntry: result.costEntry };
 }
 
 function loadPromptFile(filename: string): string {

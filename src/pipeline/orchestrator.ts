@@ -274,7 +274,8 @@ export async function runPipeline(
       ? `\n## Vendor Documentation\nLocal vendor docs available at: ${vendorDocsDir}\nRead ${resolve(vendorDocsDir, "INDEX.md")} for a list of all available docs. Include doc file paths in your plan so the generator can reference them.\n`
       : "";
     const contextForPlanner = scoutText + "\n\n" + preflightText + vendorDocsRef + decisionContext;
-    await runPlanner(config, sprint, planFilePath, prdPath, contextForPlanner, expertiseText);
+    const plannerResult = await runPlanner(config, sprint, planFilePath, prdPath, contextForPlanner, expertiseText);
+    costLedger.record({ ...plannerResult.costEntry, sprintId: sprint.id });
 
     if (fileExists(planFilePath)) {
       const planContent = readText(planFilePath);
@@ -425,7 +426,8 @@ export async function runPipeline(
             `Add missing steps for the failures above. Keep existing steps that worked.`,
           ].join("\n");
 
-          await runPlanner(config, sprint, planFilePath, prdPath, amendPrompt, expertiseText);
+          const amendResult = await runPlanner(config, sprint, planFilePath, prdPath, amendPrompt, expertiseText);
+          costLedger.record({ ...amendResult.costEntry, sprintId: sprint.id });
           log("ROUTE", "Plan amended.");
           planAmended = true;
         }
@@ -516,7 +518,8 @@ export async function runPipeline(
       previousScore = lastEvalResult?.overallScore ?? 0;
 
       // Build — generator reads plan file (and feedback file on retry)
-      await runGenerator(config, planFilePath, feedbackFilePath);
+      const generatorResult = await runGenerator(config, planFilePath, feedbackFilePath);
+      costLedger.record({ ...generatorResult.costEntry, sprintId: sprint.id });
       log("BUILD", "Generator done.");
 
       // Detect what changed via git diff
@@ -546,7 +549,8 @@ export async function runPipeline(
       saveState(stateDir, state);
       log("EVAL", "Running evaluator (adversarial)...");
 
-      const evalResult = await runEvaluator(config, contract(sprint, planFilePath), filesChanged);
+      const { evalResult, costEntry: evalCostEntry } = await runEvaluator(config, contract(sprint, planFilePath), filesChanged);
+      costLedger.record({ ...evalCostEntry, sprintId: sprint.id });
 
       const attemptRecord: BuildAttempt = {
         attempt,
@@ -628,7 +632,8 @@ export async function runPipeline(
 
         try {
           const contractData = contract(sprint, planFilePath);
-          const update = await runImprover(config, contractData, sprintState.attempts, expertiseText);
+          const { update, costEntry: improveCostEntry } = await runImprover(config, contractData, sprintState.attempts, expertiseText);
+          costLedger.record({ ...improveCostEntry, sprintId: sprint.id });
           if (update.newPatterns.length > 0 || update.newGotchas.length > 0 || update.newDecisions.length > 0) {
             const expertisePath = resolve(config.expertise.dir, `${update.domain}.yaml`);
             const { changesApplied } = applyExpertiseUpdate(expertisePath, update, config.expertise.maxLines);
@@ -709,7 +714,67 @@ export async function runPipeline(
     expertiseFilesUpdated: [],
   };
 
-  log("DONE", `\nPipeline ${result.status}. ${sprintResults.length} sprints, ${totalDuration}ms total.`);
+  // --- Build Summary ---
+  const fmtDur = (ms: number) => {
+    if (ms < 60_000) return `${(ms / 1000).toFixed(0)}s`;
+    const m = Math.floor(ms / 60_000);
+    const s = Math.round((ms % 60_000) / 1000);
+    return `${m}m ${s}s`;
+  };
+  const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  const fmtCost = (n: number) => `$${n.toFixed(2)}`;
+
+  console.log(`\n⚓ Build ${result.status === "complete" ? "Complete" : "Failed"} — ${prd.title}`);
+  console.log(`${"═".repeat(80)}`);
+  console.log(`${"Sprint".padEnd(40)} ${"Score".padStart(7)} ${"Tries".padStart(6)} ${"Time".padStart(8)} ${"Tokens".padStart(8)} ${"API Cost".padStart(9)}`);
+  console.log(`${"─".repeat(80)}`);
+
+  let totalTokens = 0;
+  let totalApiCost = 0;
+
+  for (const sr of sprintResults) {
+    const sprintPlan = sprints.find((s) => s.id === sr.sprintId);
+    const name = (sprintPlan?.title ?? sr.sprintId).slice(0, 38);
+    const score = sr.finalScore > 0 ? `${sr.finalScore}/10` : "—";
+    const tokens = costLedger.tokensForSprint(sr.sprintId);
+    const apiCost = costLedger.apiCostForSprint(sr.sprintId);
+    totalTokens += tokens.total;
+    totalApiCost += apiCost;
+
+    console.log(
+      `${(sr.status === "passed" ? "✓" : "✗")} ${name.padEnd(38)} ${score.padStart(7)} ${String(sr.attempts).padStart(6)} ${fmtDur(sr.durationMs).padStart(8)} ${fmtTokens(tokens.total).padStart(8)} ${fmtCost(apiCost).padStart(9)}`
+    );
+  }
+
+  console.log(`${"─".repeat(80)}`);
+  console.log(
+    `  ${"TOTAL".padEnd(38)} ${`${(sprintResults.reduce((s, r) => s + r.finalScore, 0) / sprintResults.length).toFixed(1)} avg`.padStart(7)} ${String(sprintResults.reduce((s, r) => s + r.attempts, 0)).padStart(6)} ${fmtDur(totalDuration).padStart(8)} ${fmtTokens(totalTokens).padStart(8)} ${fmtCost(totalApiCost).padStart(9)}`
+  );
+
+  // Token breakdown by agent
+  const agents = ["generator", "evaluator", "planner", "scout", "validator", "improver", "negotiator"];
+  const agentTokens = agents.map((a) => ({ agent: a, tokens: costLedger.tokensForAgent(a) })).filter((a) => a.tokens > 0);
+  if (agentTokens.length > 0) {
+    console.log(`\nTokens by agent:`);
+    for (const { agent, tokens } of agentTokens.sort((a, b) => b.tokens - a.tokens)) {
+      const pct = totalTokens > 0 ? Math.round((tokens / totalTokens) * 100) : 0;
+      console.log(`  ${agent.padEnd(14)} ${fmtTokens(tokens).padStart(8)} (${pct}%)`);
+    }
+  }
+
+  console.log(`\n  Pricing: Subscription (actual cost: $0). API pricing shown for reference.`);
+  console.log(`${"═".repeat(80)}\n`);
+
+  // Generate handover report if build succeeded
+  if (allPassed) {
+    try {
+      const { generateHandover } = await import("../tracking/handover.js");
+      generateHandover(config, state, sprintResults, costLedger, prd);
+      log("HANDOVER", `Report written to ${resolve(config.target.dir, "HANDOVER.md")}`);
+    } catch (err) {
+      log("HANDOVER", `Failed to generate handover report: ${err}`);
+    }
+  }
 
   return result;
 }
