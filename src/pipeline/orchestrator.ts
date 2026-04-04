@@ -30,6 +30,14 @@ import { writeJsonFile, writeText, ensureDir, readText, fileExists } from "../li
 import { CostLedger } from "../lib/cost.js";
 import { runPreflight, formatPreflightForPrompt, formatPreflightOneLiner, autoFix } from "./preflight.js";
 import { writeDecisionRequired, notifyHuman, readDecisionAnswer } from "./decisions.js";
+import {
+  hashPrd,
+  readCache,
+  writeCache,
+  isCacheValid,
+  shouldDowngradeCriticals,
+  updateCache,
+} from "./validation-cache.js";
 import type { ShipwrightConfig } from "../config.js";
 import type { DecisionRequest } from "./types.js";
 import type {
@@ -52,6 +60,7 @@ export async function runPipeline(
     noCommit?: boolean;
     noImprove?: boolean;
     noValidate?: boolean;
+    forceValidate?: boolean;
     verbose?: boolean;
   } = {}
 ): Promise<PipelineResult> {
@@ -120,36 +129,68 @@ export async function runPipeline(
     log("DOC_FETCH", "No MCP servers configured. Skipping.");
   }
 
-  // --- Phase: PRD VALIDATION ---
+  // --- Phase: PRD VALIDATION (cache-aware) ---
   if (!options.noValidate) {
-    log("VALIDATE", "Validating PRD against vendor documentation...");
-    try {
-      const validationResult = await runValidator(config, prdPath, vendorDocsDir);
-      writeJsonFile(resolve(stateDir, "validation-report.json"), validationResult);
-      console.log(formatValidationReport(validationResult));
+    const prdHash = hashPrd(prdPath);
+    const validationCache = readCache(stateDir);
 
-      if (validationResult.summary.verdict === "BLOCK") {
-        log("VALIDATE", `🛑 PRD BLOCKED — ${validationResult.summary.critical} critical issues found.`);
-        log("VALIDATE", "Fix the PRD before running Shipwright. See .shipwright/validation-report.json");
+    // Check cache (unless --force-validate)
+    if (!options.forceValidate && isCacheValid(validationCache, prdPath, prdHash)) {
+      const cached = validationCache.entries[prdPath];
+      log("VALIDATE", `Cache hit — PRD unchanged since last validation (${cached.verdict})`);
+    } else if (!options.forceValidate && shouldDowngradeCriticals(validationCache, prdPath)) {
+      log("VALIDATE", `Max validation passes (3) reached — remaining criticals downgraded to warnings. The evaluator will catch real failures during build.`);
+    } else {
+      log("VALIDATE", "Validating PRD against vendor documentation...");
+      try {
+        const validationResult = await runValidator(config, prdPath, vendorDocsDir);
+        const reportPath = resolve(stateDir, "validation-report.json");
+        writeJsonFile(reportPath, validationResult);
+        console.log(formatValidationReport(validationResult));
 
-        return {
+        // Update cache with result
+        updateCache(
+          validationCache,
           prdPath,
-          status: "failed",
-          sprints: [],
-          totalCostUsd: costLedger.totalCostUsd,
-          totalDurationMs: Date.now() - startTime,
-          expertiseFilesUpdated: [],
-        };
-      }
+          prdHash,
+          validationResult.summary.verdict as "PASS" | "REVIEW" | "BLOCK",
+          {
+            critical: validationResult.summary.critical,
+            warning: validationResult.summary.warning,
+            info: validationResult.summary.info,
+          },
+          reportPath
+        );
+        writeCache(stateDir, validationCache);
 
-      if (validationResult.summary.verdict === "REVIEW") {
-        log("VALIDATE", `⚠️  PRD has ${validationResult.summary.warning} warnings. Proceeding — review recommended.`);
-      } else {
-        log("VALIDATE", "✅ PRD validation passed.");
+        if (validationResult.summary.verdict === "BLOCK") {
+          // Check if pass count now exceeds max — downgrade criticals
+          if (shouldDowngradeCriticals(validationCache, prdPath)) {
+            log("VALIDATE", `Max validation passes (3) reached — remaining criticals downgraded to warnings. The evaluator will catch real failures during build.`);
+          } else {
+            log("VALIDATE", `🛑 PRD BLOCKED — ${validationResult.summary.critical} critical issues found.`);
+            log("VALIDATE", "Fix the PRD before running Shipwright. See .shipwright/validation-report.json");
+
+            return {
+              prdPath,
+              status: "failed",
+              sprints: [],
+              totalCostUsd: costLedger.totalCostUsd,
+              totalDurationMs: Date.now() - startTime,
+              expertiseFilesUpdated: [],
+            };
+          }
+        }
+
+        if (validationResult.summary.verdict === "REVIEW") {
+          log("VALIDATE", `⚠️  PRD has ${validationResult.summary.warning} warnings. Proceeding — review recommended.`);
+        } else if (validationResult.summary.verdict === "PASS") {
+          log("VALIDATE", "✅ PRD validation passed.");
+        }
+      } catch (err) {
+        log("VALIDATE", `Validation failed (non-fatal): ${err}`);
+        log("VALIDATE", "Proceeding without validation — MCP servers may not be available.");
       }
-    } catch (err) {
-      log("VALIDATE", `Validation failed (non-fatal): ${err}`);
-      log("VALIDATE", "Proceeding without validation — MCP servers may not be available.");
     }
   } else {
     log("VALIDATE", "Skipped (--no-validate flag).");

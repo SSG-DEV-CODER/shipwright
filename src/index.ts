@@ -17,6 +17,13 @@ import { loadExpertise } from "./expertise/loader.js";
 import { parsePRD } from "./intake/prd-parser.js";
 import { deriveSprints } from "./intake/sprint-planner.js";
 import { fileExists, readJsonFile, readText } from "./lib/fs.js";
+import { loadManifest } from "./campaign/manifest.js";
+import {
+  validateCampaign,
+  formatValidationSummary,
+  buildCampaign,
+  formatBuildSummary,
+} from "./campaign/runner.js";
 import type { PipelineState } from "./pipeline/types.js";
 
 const VERSION = "0.1.0";
@@ -94,6 +101,7 @@ async function runBuild(args: ParsedArgs): Promise<void> {
     noCommit: args.flags["no-commit"] === true,
     noImprove: args.flags["no-improve"] === true,
     noValidate: args.flags["no-validate"] === true,
+    forceValidate: args.flags["force-validate"] === true,
     verbose: args.flags.verbose === true,
   });
 
@@ -353,6 +361,63 @@ async function runValidate(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function runCampaignCmd(args: ParsedArgs): Promise<void> {
+  const subcmd = args.positional[0]; // "validate" or "build"
+  const manifestPath = args.positional[1];
+
+  if (!subcmd || !["validate", "build"].includes(subcmd)) {
+    console.error("Usage: shipwright campaign <validate|build> <manifest-path>");
+    process.exit(1);
+  }
+  if (!manifestPath) {
+    console.error(`Usage: shipwright campaign ${subcmd} <manifest-path>`);
+    process.exit(1);
+  }
+
+  const manifest = loadManifest(manifestPath);
+  const config = applyCliOverrides(
+    loadConfig(manifest.config),
+    args.flags as Record<string, string>
+  );
+
+  console.log(`\n⚓ Shipwright v${VERSION} — Campaign ${subcmd === "validate" ? "Validation" : "Build"}`);
+  console.log(`   Manifest: ${manifestPath}`);
+  console.log(`   Phases: ${manifest.phases.length}`);
+  console.log(`   Config: ${manifest.config}\n`);
+
+  if (subcmd === "validate") {
+    const result = await validateCampaign(manifest, config, {
+      forceValidate: args.flags["force-validate"] === true,
+    });
+    console.log(formatValidationSummary(result, manifestPath));
+    process.exit(result.blocked > 0 ? 1 : 0);
+  }
+
+  if (subcmd === "build") {
+    const fromFlag = args.flags.from ? parseInt(args.flags.from as string, 10) : undefined;
+    const onlyFlag = args.flags.only ? parseInt(args.flags.only as string, 10) : undefined;
+
+    if (fromFlag !== undefined && (isNaN(fromFlag) || fromFlag < 1 || fromFlag > manifest.phases.length)) {
+      console.error(`--from must be between 1 and ${manifest.phases.length}`);
+      process.exit(1);
+    }
+    if (onlyFlag !== undefined && (isNaN(onlyFlag) || onlyFlag < 1 || onlyFlag > manifest.phases.length)) {
+      console.error(`--only must be between 1 and ${manifest.phases.length}`);
+      process.exit(1);
+    }
+
+    const result = await buildCampaign(manifest, config, {
+      from: fromFlag,
+      only: onlyFlag,
+      noCommit: args.flags["no-commit"] === true,
+      noImprove: args.flags["no-improve"] === true,
+      verbose: args.flags.verbose === true,
+    });
+    console.log(formatBuildSummary(result, manifestPath));
+    process.exit(result.failedAt ? 1 : 0);
+  }
+}
+
 function showHelp(): void {
   console.log(`
 ⚓ Shipwright v${VERSION} — Adversarial build system with expert learning
@@ -363,6 +428,8 @@ USAGE:
 COMMANDS:
   build <prd-path>         Run a PRD through the adversarial pipeline
   validate <prd-path>      Validate PRD against vendor docs (runs before build)
+  campaign validate <m>    Validate all PRDs in a campaign manifest (cache-aware)
+  campaign build <m>       Build all phases in a campaign manifest sequentially
   expertise <subcmd>       Manage expertise files (list|validate|improve|create|question)
   status                   Show current pipeline state
   resume                   Resume interrupted pipeline from checkpoint
@@ -381,11 +448,19 @@ BUILD OPTIONS:
   --no-commit              Skip git commits
   --no-improve             Skip expertise self-improvement
   --no-validate            Skip PRD validation step
+  --force-validate         Re-validate even if cached
   --model-override <r>=<m> Override model for a role (e.g., planner=claude-sonnet-4-20250514)
+
+CAMPAIGN OPTIONS:
+  --from <n>               Start building from phase N (skip earlier phases)
+  --only <n>               Build only phase N
+  --force-validate         Re-validate all PRDs (ignore cache)
 
 EXAMPLES:
   shipwright build docs/plans/PRD-feature.md
   shipwright build PRD.md --target-dir ../other-repo --dry-run
+  shipwright campaign validate builds/platform-campaign.yaml
+  shipwright campaign build builds/platform-campaign.yaml --from 4
   shipwright expertise list
   shipwright expertise improve nextjs-payload
   shipwright init
@@ -402,6 +477,9 @@ switch (args.command) {
     break;
   case "validate":
     await runValidate(args);
+    break;
+  case "campaign":
+    await runCampaignCmd(args);
     break;
   case "expertise":
     await runExpertise(args);

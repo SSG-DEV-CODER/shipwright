@@ -1,0 +1,19 @@
+# Shipwright Campaign Manifest
+# Define all PRDs in build order — validate and build with a single command
+#
+# Usage:
+#   shipwright campaign validate builds/my-campaign.yaml
+#   shipwright campaign build builds/my-campaign.yaml
+#   shipwright campaign build builds/my-campaign.yaml --from 3
+
+# Path to shipwright.yaml config (relative to this manifest)
+config: ../shipwright.yaml
+
+# Phases — ordered list of PRDs to build sequentially
+phases:
+  - prd: ../prds/PRD-phase-1.md
+    label: "Phase 1: Foundation"
+  # - prd: ../prds/PRD-phase-2.md
+  #   label: "Phase 2: Core Features"
+  # - prd: ../prds/PRD-phase-3.md
+  #   label: "Phase 3: Integration"
